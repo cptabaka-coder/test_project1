@@ -13,3 +13,13 @@ When real code is added, update this file with:
 ## Conventions
 
 - Environment configuration goes in `.env` / `.env.*` files, which are gitignored. Commit a `.env.example` documenting required variables (this pattern is already whitelisted in `.gitignore`).
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues in `cptabaka-coder/test_project1`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` plus `docs/adr/` at the repo root, both created lazily by `/domain-modeling`. See `docs/agents/domain.md`.
