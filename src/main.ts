@@ -1,9 +1,20 @@
 import { Application, Container } from "pixi.js";
-import { LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./data/constants";
+import { createLoop } from "./game/loop";
+import { FIXED_DT, LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./data/constants";
+import { createInitialState, NO_INPUT } from "./sim/types";
+import { step } from "./sim/step";
 import { createArenaView } from "./systems/render";
 
 const host = document.getElementById("app");
 if (!host) throw new Error("#app host element is missing");
+
+// Seed the Run from ?seed=… when given (reproducible), otherwise pick one and
+// show it so a run can be reported and replayed.
+const url = new URL(window.location.href);
+const seedParam = url.searchParams.get("seed");
+const seed = seedParam !== null ? Number(seedParam) | 0 : (Math.random() * 2 ** 32) | 0;
+
+const state = createInitialState(seed);
 
 const app = new Application();
 await app.init({
@@ -16,9 +27,8 @@ await app.init({
 });
 host.appendChild(app.canvas);
 
-// One fixed logical stage (1280x720). The whole stage is scaled to fit the
-// window — integer scale when it fits, fractional below 1x — and the CSS grid
-// in index.html letterboxes it. Gameplay code always works in logical space.
+// One fixed logical stage (1280x720), scaled to fit the window — integer scale
+// when it fits, fractional below 1x — and letterboxed by the CSS grid.
 const stage = new Container();
 stage.addChild(createArenaView());
 app.stage.addChild(stage);
@@ -36,5 +46,21 @@ function fit(): void {
 fit();
 window.addEventListener("resize", fit);
 
-// Issue #1 is render-only: PixiJS's built-in ticker redraws the static Arena.
-// The fixed-timestep simulation loop is issue #2 — see src/game/loop.ts.
+// Small readout: seed for repro, plus tick count so the fixed-timestep loop is
+// visibly advancing (and visibly catching up after a stall).
+const readout = document.createElement("div");
+readout.style.cssText =
+  "position:fixed;left:8px;top:8px;font:12px ui-monospace,monospace;color:#8b8fa8;pointer-events:none";
+document.body.appendChild(readout);
+
+// PixiJS renders the stage on its own ticker; this loop owns the simulation.
+const loop = createLoop({
+  state,
+  step,
+  sampleInputs: () => NO_INPUT,
+  render: (s) => {
+    readout.textContent = `seed 0x${(seed >>> 0).toString(16)} · tick ${s.tick}`;
+  },
+  fixedDtMs: FIXED_DT * 1000,
+});
+loop.start();

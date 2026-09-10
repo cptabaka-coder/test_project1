@@ -14,7 +14,15 @@ builds a stronger loadout in a shop between waves.
 
 ## Status
 
-Design phase. No code scaffolded yet — the Vite/PixiJS/Vitest project is issue #1.
+Early build. Scaffold (#1) and the fixed-timestep loop (#2) are done. Next: object
+pools / spatial hash / entity model (#3), then the bunny (#4). Roadmap is issues #1–#14.
+
+## Commands
+
+- `npm run dev` — Vite dev server
+- `npm test` / `npm run test:watch` — Vitest against `test/**`
+- `npm run build` — type-check then static build to `dist/`
+- `npm run lint` — ESLint (also enforces the `src/sim/**` no-renderer-imports rule)
 
 ## Architecture (intended)
 
@@ -27,8 +35,11 @@ Design phase. No code scaffolded yet — the Vite/PixiJS/Vitest project is issue
   simulation unit-testable and the renderer replaceable.
 - **Difficulty scales with wave number only** (ADR 0003) — never with player power. Do
   not add rubber-banding.
-- Pure `src/sim/` and `src/data/` (damage/armor/dodge math, RNG determinism, wave-budget
-  generation, targeting) are the unit-test surface. No E2E for the slice.
+- Pure logic (`src/sim/`, `src/data/`, `src/game/accumulator.ts`: damage/armor/dodge math,
+  RNG determinism, the fixed-timestep accumulator, wave-budget generation, targeting) is
+  the unit-test surface. The rAF driver (`src/game/loop.ts`), renderer and DOM UI are
+  verified by running the game, not unit-tested. No E2E for the slice.
+- All game logic is reachable through one seam: `step(state, inputs, dt)` in `src/sim/`.
 
 ## Conventions
 
