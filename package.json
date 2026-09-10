@@ -1,0 +1,26 @@
+{
+  "name": "bunny-survivor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Top-down arena horde-survivor for the browser. A cybernetic bunny holds an arena against waves of zombie- and vampire-bunnies.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "pixi.js": "^8.20.1"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
+  }
+}
