@@ -9,7 +9,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    // The simulation seam is the only unit-test surface (ADR 0002).
-    include: ["test/sim/**/*.test.ts"],
+    // Unit tests cover the pure logic core only — the simulation seam and the
+    // fixed-timestep accumulator. The renderer and DOM UI are not unit-tested
+    // (ADR 0002); the boundary is enforced by ESLint on src/sim/**.
+    include: ["test/**/*.test.ts"],
   },
 });
