@@ -6,3 +6,6 @@ node_modules/
 dist/
 .vite/
 *.local
+
+# Scratch output from .claude/skills/visual-check
+.visual-check/
