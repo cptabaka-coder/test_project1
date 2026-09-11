@@ -69,4 +69,18 @@ describe("createEntityStore", () => {
     store.forEachActive((item) => seen.push(item));
     expect(seen).toEqual([{ hp: 1, tag: "" }]);
   });
+
+  it("isActive tells apart a live entity from a despawned (pooled) one", () => {
+    const store = createEntityStore(2, makeDummy, resetDummy);
+
+    const entity = store.spawn((item) => {
+      item.hp = 5;
+    });
+
+    expect(store.isActive(entity!)).toBe(true);
+
+    store.despawn(entity!);
+
+    expect(store.isActive(entity!)).toBe(false);
+  });
 });

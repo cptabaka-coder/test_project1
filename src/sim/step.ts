@@ -5,6 +5,8 @@ import {
   FIXED_DT,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
+  PROJECTILE_RADIUS,
+  PROJECTILE_TTL_SECONDS,
   SHAMBLER_CONTACT_DAMAGE,
   SHAMBLER_HP,
   SHAMBLER_RADIUS,
@@ -74,6 +76,7 @@ export function step(
       enemy.y = pos.y;
       enemy.radius = SHAMBLER_RADIUS;
       enemy.hp = SHAMBLER_HP;
+      enemy.maxHp = SHAMBLER_HP;
       enemy.speed = SHAMBLER_SPEED;
       enemy.contactDamage = SHAMBLER_CONTACT_DAMAGE;
     });
@@ -84,9 +87,68 @@ export function step(
     const dx = state.bunny.x - enemy.x;
     const dy = state.bunny.y - enemy.y;
     const distance = Math.hypot(dx, dy);
-    if (distance === 0) return;
-    enemy.x += (dx / distance) * enemy.speed * dt;
-    enemy.y += (dy / distance) * enemy.speed * dt;
+    const ranged = enemy.ranged;
+    // A ranged enemy holds its distance once in range instead of closing to melee.
+    const holding = ranged !== undefined && distance <= ranged.range;
+
+    const dash = enemy.dash;
+    if (dash) {
+      if (dash.activeSecondsRemaining > 0) {
+        dash.activeSecondsRemaining = Math.max(0, dash.activeSecondsRemaining - dt);
+      } else {
+        dash.cooldownRemaining = Math.max(0, dash.cooldownRemaining - dt);
+        if (dash.cooldownRemaining <= 0) {
+          dash.activeSecondsRemaining = dash.durationSeconds;
+          dash.cooldownRemaining = dash.cooldownSeconds;
+        }
+      }
+    }
+    const effectiveSpeed =
+      dash && dash.activeSecondsRemaining > 0 ? enemy.speed * dash.speedMultiplier : enemy.speed;
+
+    if (distance !== 0 && !holding) {
+      enemy.x += (dx / distance) * effectiveSpeed * dt;
+      enemy.y += (dy / distance) * effectiveSpeed * dt;
+    }
+
+    // Flying enemies ignore the stage's edge entirely (design spec §6);
+    // grounded enemies can't be pushed past it.
+    if (!enemy.flies) {
+      const enemyMinX = enemy.radius;
+      const enemyMaxX = LOGICAL_WIDTH - enemy.radius;
+      if (enemy.x > enemyMaxX) enemy.x = enemyMaxX;
+      else if (enemy.x < enemyMinX) enemy.x = enemyMinX;
+
+      const enemyMinY = enemy.radius;
+      const enemyMaxY = LOGICAL_HEIGHT - enemy.radius;
+      if (enemy.y > enemyMaxY) enemy.y = enemyMaxY;
+      else if (enemy.y < enemyMinY) enemy.y = enemyMinY;
+    }
+
+    if (ranged) {
+      ranged.cooldownRemaining = Math.max(0, ranged.cooldownRemaining - dt);
+      if (holding && ranged.cooldownRemaining <= 0 && distance !== 0) {
+        state.projectiles.spawn((p) => {
+          p.x = enemy.x;
+          p.y = enemy.y;
+          p.vx = (dx / distance) * ranged.projectileSpeed;
+          p.vy = (dy / distance) * ranged.projectileSpeed;
+          p.radius = PROJECTILE_RADIUS;
+          p.damage = ranged.damage;
+          p.ttlSeconds = PROJECTILE_TTL_SECONDS;
+          p.lifestealPercent = enemy.lifestealPercent;
+          p.owner = enemy;
+        });
+        ranged.cooldownRemaining = ranged.cooldownSeconds;
+      }
+    }
+  });
+
+  state.projectiles.forEachActive((p) => {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.ttlSeconds -= dt;
+    if (p.ttlSeconds <= 0) state.projectiles.despawn(p);
   });
 
   for (const slot of state.bunny.weaponSlots) {
@@ -140,6 +202,28 @@ export function step(
       if (dx * dx + dy * dy <= touchRange * touchRange) {
         state.bunny.hp -= enemy.contactDamage;
         state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
+        if (enemy.lifestealPercent > 0) {
+          const healed = enemy.contactDamage * (enemy.lifestealPercent / 100);
+          enemy.hp = Math.min(enemy.hp + healed, enemy.maxHp);
+        }
+      }
+    });
+  }
+
+  if (state.bunny.iframeSeconds <= 0) {
+    state.projectiles.forEachActive((p) => {
+      if (state.bunny.iframeSeconds > 0) return; // already hit this tick
+      const dx = p.x - state.bunny.x;
+      const dy = p.y - state.bunny.y;
+      const touchRange = p.radius + state.bunny.radius;
+      if (dx * dx + dy * dy <= touchRange * touchRange) {
+        state.bunny.hp -= p.damage;
+        state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
+        if (p.lifestealPercent > 0 && p.owner && state.enemies.isActive(p.owner)) {
+          const healed = p.damage * (p.lifestealPercent / 100);
+          p.owner.hp = Math.min(p.owner.hp + healed, p.owner.maxHp);
+        }
+        state.projectiles.despawn(p);
       }
     });
   }

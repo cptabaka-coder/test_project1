@@ -44,3 +44,7 @@ export const ENEMY_SPAWN_OFFSET = 16;
 
 /** The bunny's carrying positions for Weapons (design spec §5). */
 export const WEAPON_SLOT_COUNT = 6;
+
+/** A fired shot despawns (a miss) if it hasn't hit anything by then. */
+export const PROJECTILE_TTL_SECONDS = 3;
+export const PROJECTILE_RADIUS = 4;

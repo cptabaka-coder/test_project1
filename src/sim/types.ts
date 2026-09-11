@@ -2,6 +2,7 @@ import {
   BUNNY_MAX_HP,
   BUNNY_RADIUS,
   CAP_ENEMIES,
+  CAP_PROJECTILES,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
   WEAPON_SLOT_COUNT,
@@ -94,18 +95,60 @@ export interface Bunny {
   weaponSlots: WeaponSlot[];
 }
 
-/** An undead-rabbit enemy (design spec §6). Only the Shambler exists so far. */
+/** A ranged attack's tuning plus its own firing cooldown (design spec §6: Spitter, Stalker). */
+export interface RangedAttackState {
+  damage: number;
+  projectileSpeed: number;
+  /** The enemy holds at this distance and fires, rather than closing to melee. */
+  range: number;
+  cooldownSeconds: number;
+  cooldownRemaining: number;
+}
+
+/** A periodic speed burst toward the bunny (Fledgling — design spec §6). */
+export interface DashState {
+  speedMultiplier: number;
+  durationSeconds: number;
+  cooldownSeconds: number;
+  cooldownRemaining: number;
+  /** > 0 while the burst is active; movement speed is `speed * speedMultiplier` then. */
+  activeSecondsRemaining: number;
+}
+
+/** An undead-rabbit enemy (design spec §6). */
 export interface Enemy {
   x: number;
   y: number;
   radius: number;
   hp: number;
+  /** Caps Lifesteal healing (design spec §6: Fledgling, Stalker). */
+  maxHp: number;
   speed: number;
   contactDamage: number;
+  /** Flying enemies (the Stalker) ignore the Arena's walls/cover (design spec §6). */
+  flies: boolean;
+  /** % of damage dealt to the bunny returned as HP (Fledgling, Stalker — design spec §6). */
+  lifestealPercent: number;
+  /** Present for ranged attackers (Spitter, Stalker); undefined for melee-only enemies. */
+  ranged: RangedAttackState | undefined;
+  /** Present for the Fledgling; undefined for enemies that don't dash. */
+  dash: DashState | undefined;
 }
 
 function createEnemy(): Enemy {
-  return { x: 0, y: 0, radius: 0, hp: 0, speed: 0, contactDamage: 0 };
+  return {
+    x: 0,
+    y: 0,
+    radius: 0,
+    hp: 0,
+    maxHp: 0,
+    speed: 0,
+    contactDamage: 0,
+    flies: false,
+    lifestealPercent: 0,
+    ranged: undefined,
+    dash: undefined,
+  };
 }
 
 function resetEnemy(enemy: Enemy): void {
@@ -113,8 +156,58 @@ function resetEnemy(enemy: Enemy): void {
   enemy.y = 0;
   enemy.radius = 0;
   enemy.hp = 0;
+  enemy.maxHp = 0;
   enemy.speed = 0;
   enemy.contactDamage = 0;
+  enemy.flies = false;
+  enemy.lifestealPercent = 0;
+  enemy.ranged = undefined;
+  enemy.dash = undefined;
+}
+
+/** A fired shot (Spitter's spit, Stalker's blood-bolt — design spec §6). Travels in a
+ * straight line and damages the bunny on contact. */
+export interface Projectile {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  damage: number;
+  /** Seconds left before the shot expires unfired-and-forgotten (a miss). */
+  ttlSeconds: number;
+  /** % of this shot's damage, if it lands, returned to the firer as HP. */
+  lifestealPercent: number;
+  /** The firing enemy, so a lifesteal-landing hit can heal it back. May have
+   * despawned (and its pooled slot reused) by the time the shot lands — callers
+   * must check `enemies.isActive(owner)` before crediting the heal. */
+  owner: Enemy | undefined;
+}
+
+function createProjectile(): Projectile {
+  return {
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    radius: 0,
+    damage: 0,
+    ttlSeconds: 0,
+    lifestealPercent: 0,
+    owner: undefined,
+  };
+}
+
+function resetProjectile(projectile: Projectile): void {
+  projectile.x = 0;
+  projectile.y = 0;
+  projectile.vx = 0;
+  projectile.vy = 0;
+  projectile.radius = 0;
+  projectile.damage = 0;
+  projectile.ttlSeconds = 0;
+  projectile.lifestealPercent = 0;
+  projectile.owner = undefined;
 }
 
 /** Everything the simulation needs to advance one fixed step. */
@@ -126,6 +219,7 @@ export interface GameState {
   tick: number;
   bunny: Bunny;
   enemies: EntityStore<Enemy>;
+  projectiles: EntityStore<Projectile>;
   /** Remaining Wave-1 spawn timestamps, seconds from Wave start (design spec §7). */
   waveSpawnSchedule: number[];
   /** Seconds elapsed in the current Wave. */
@@ -156,6 +250,7 @@ export function createInitialState(seed: number): GameState {
       weaponSlots: createWeaponSlots(),
     },
     enemies: createEntityStore(CAP_ENEMIES, createEnemy, resetEnemy),
+    projectiles: createEntityStore(CAP_PROJECTILES, createProjectile, resetProjectile),
     waveSpawnSchedule: generateWaveBudget(1, rng),
     waveElapsedSeconds: 0,
   };

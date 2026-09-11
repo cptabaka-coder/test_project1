@@ -12,6 +12,8 @@ export interface EntityStore<T> {
   /** Deactivates an entity and returns it to the pool for reuse. */
   despawn(item: T): void;
   forEachActive(fn: (item: T) => void): void;
+  /** True if `item` is currently active (not despawned, not stale pool churn). */
+  isActive(item: T): boolean;
 }
 
 export function createEntityStore<T>(
@@ -40,6 +42,10 @@ export function createEntityStore<T>(
 
     forEachActive(fn: (item: T) => void): void {
       for (const item of active) fn(item);
+    },
+
+    isActive(item: T): boolean {
+      return active.includes(item);
     },
   };
 }
