@@ -164,3 +164,55 @@ Waves 6–20 · the wave-10 mini-boss and wave-20 final Boss · localization.
 20 Waves, 20–40 s each, +12%/Wave scaling, wave-driven only. Zombie-dominant Waves 1–7 →
 mixed 6–14 → Vampire-dominant 12–20. Vampire mini-boss at Wave 10; player-flavored final
 Boss at Wave 20.
+
+## 13. Performance (issue #14)
+
+**Entity caps and overflow.** 400 enemies / 300 projectiles / 200 pickups (§2), enforced by
+`EntityStore.spawn` refusing once its cap is full. Verified by `test/sim/entityStore.test.ts`.
+Overflow policy differs by kind, per §2's parentheticals:
+- **Enemies**: queued. `waveDirector.drainDueSpawns` leaves a due-but-refused spawn at the
+  front of the schedule to retry next tick, in order — nothing is dropped
+  (`test/sim/waveDirector.test.ts`).
+- **Pickups**: vacuum oldest. `EntityStore.spawnVacuumingOldest` evicts the single oldest
+  active Carrot to make room, so a kill's drop is never silently lost even with 200 already
+  on the ground (`test/sim/entityStore.test.ts`, `test/sim/pickupOverflow.test.ts`). Before
+  this issue, `killEnemy` used plain `spawn`, which — at the cap — silently dropped the new
+  Carrot instead; this was a real gap, not just an unenforced policy.
+- **Projectiles**: no policy is specified for this kind in §2's table; a full store simply
+  skips that tick's shot. Projectiles are short-lived (`PROJECTILE_TTL_SECONDS`), so a missed
+  spawn attempt is low-impact and doesn't need queuing or vacuuming.
+
+**Degrade path.** §2: "reduce particle density first, then lower the enemy cap, when frame
+time slips." This slice has no particle-effects system yet (hit-flashes, death bursts, etc.
+aren't built), so only the second lever applies today. `src/game/perfDegrade.ts`'s
+`nextEnemyCap` is the tested decision function — given whether the current frame is over
+budget, it steps `EntityStore.setCapacity`'s target down (floored) or recovers it back up
+(capped at the base 400) by a fixed step. It is **not wired to a live frame-time source**:
+the step size, the slow-frame threshold, and how many consecutive slow frames should trigger
+a step are all tuning constants that need real measurements to set sensibly, and this
+environment can't produce those (see below). Wiring it blind would just be a different kind
+of guess.
+
+**Rendering: one ParticleContainer per shape.** §2: "single ParticleContainer per shape/sprite
+type." The three multi-instance layers (enemies, Carrots, Spore Burst clouds) moved from a
+plain `Container` of individually-drawn `Graphics` circles to a `ParticleContainer` per layer,
+each sharing one baked circle `Texture` (`createCircleTexture`, via
+`renderer.generateTexture`) — see `src/systems/render.ts`. The Boss and bunny stay as plain
+`Graphics`: they're singletons, so there's nothing to batch. Functional correctness (particles
+appear, move, and are removed on despawn, across all three layers, with no console errors) was
+verified by running the game in headless Chromium — see `.claude/skills/visual-check/`.
+
+**What couldn't be measured here.** The acceptance criterion is "sustained 60fps through a
+Wave-5 Boss fight on a T490-class machine." This development environment has no GPU — even
+the visual-check tooling runs headless Chromium on software rendering
+(`--use-gl=swiftshader`) — so no fps number in this document would be a real measurement, and
+none is recorded here to avoid manufacturing false confidence. What a human with the actual
+T490 (or similar integrated-graphics) hardware should do to close this out:
+1. Run a build (`npm run build && npm run preview`, or `npm run dev`) on the target machine.
+2. Force a worst-case Wave 4–5 scene (e.g. temporarily lower `WAVE_TOTAL_COUNTS`/durations,
+   or spawn near-cap enemies directly via the console) and watch DevTools' Performance panel
+   or an on-screen fps counter through the Boss fight.
+3. If frame time slips, that's exactly the signal `nextEnemyCap` is designed to consume —
+   wire it into `game/loop.ts`'s frame timing and `state.enemies.setCapacity`, then tune
+   `stepDown`/`floorCap`/the slow-frame threshold against what was actually observed, not
+   guessed numbers.

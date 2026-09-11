@@ -66,7 +66,8 @@ function familyStatFor(family: WeaponFamily, stats: Stats): number {
 function killEnemy(state: GameState, enemy: Enemy): void {
   state.enemies.despawn(enemy);
   state.totalKills += 1;
-  state.pickups.spawn((carrot) => {
+  // Pickups vacuum the oldest at capacity rather than queue/drop (design spec §2).
+  state.pickups.spawnVacuumingOldest((carrot) => {
     carrot.x = enemy.x;
     carrot.y = enemy.y;
     carrot.radius = CARROT_RADIUS;

@@ -1,5 +1,5 @@
-import { Container, Graphics } from "pixi.js";
-import { BLOATLORD_RADIUS } from "../data/boss";
+import { Container, Graphics, Particle, ParticleContainer, type Renderer, type Texture } from "pixi.js";
+import { BLOATLORD_RADIUS, SPORE_BURST_CLOUD_RADIUS } from "../data/boss";
 import {
   ARENA_MARGIN,
   BUNNY_RADIUS,
@@ -48,87 +48,108 @@ export function createBunnyView(): Graphics {
   return new Graphics().circle(0, 0, BUNNY_RADIUS).fill(0xe6e6f0);
 }
 
-export interface EnemyLayer {
-  container: Container;
-  /** Syncs child Graphics 1:1 with the store's active enemies, positioning
-   * each from `enemy.x/y`. Views are keyed by the enemy object's identity, so
-   * a pooled slot reuses its existing view across despawn/respawn. */
-  sync: (enemies: EntityStore<Enemy>) => void;
+/**
+ * Bakes a filled circle into a reusable `Texture` (issue #14: "single
+ * ParticleContainer per shape/sprite type" needs every instance sharing one
+ * texture). `radius` only sets the texture's resolution; on-screen size is
+ * controlled by each layer's Particle scale.
+ */
+export function createCircleTexture(
+  renderer: Renderer,
+  radius: number,
+  color: number,
+  alpha = 1,
+): Texture {
+  const graphics = new Graphics().circle(radius, radius, radius).fill({ color, alpha });
+  const texture = renderer.generateTexture(graphics);
+  graphics.destroy();
+  return texture;
 }
 
 /**
- * Placeholder shapes for enemies (issue #5); a texture swaps in later with no
- * change to the simulation (ADR 0001 / 0002).
+ * A ParticleContainer-backed layer for one entity kind, all rendered at a
+ * single fixed radius (matching what each kind already rendered at before
+ * this — issue #14's perf pass, not a visual change). Views are keyed by the
+ * entity object's identity: a pooled slot reuses its existing Particle
+ * across despawn/respawn, same as the plain-`Container` layers before it.
  */
-export function createEnemyLayer(): EnemyLayer {
-  const container = new Container();
-  const views = new Map<Enemy, Graphics>();
+export interface ParticleLayer<T> {
+  container: ParticleContainer;
+  sync: (store: EntityStore<T>, getX: (item: T) => number, getY: (item: T) => number) => void;
+}
+
+function createParticleLayer<T extends object>(texture: Texture): ParticleLayer<T> {
+  const container = new ParticleContainer({ texture });
+  const particles = new Map<T, Particle>();
 
   return {
     container,
-    sync(enemies: EntityStore<Enemy>): void {
-      const active = new Set<Enemy>();
+    sync(store, getX, getY): void {
+      const active = new Set<T>();
 
-      enemies.forEachActive((enemy) => {
-        active.add(enemy);
-        let view = views.get(enemy);
-        if (!view) {
-          view = new Graphics().circle(0, 0, SHAMBLER_RADIUS).fill(0x8fbf5f);
-          views.set(enemy, view);
-          container.addChild(view);
+      store.forEachActive((item) => {
+        active.add(item);
+        let particle = particles.get(item);
+        if (!particle) {
+          particle = new Particle({ texture, anchorX: 0.5, anchorY: 0.5 });
+          particles.set(item, particle);
+          container.addParticle(particle);
         }
-        view.position.set(enemy.x, enemy.y);
+        particle.x = getX(item);
+        particle.y = getY(item);
       });
 
-      for (const [enemy, view] of views) {
-        if (active.has(enemy)) continue;
-        container.removeChild(view);
-        view.destroy();
-        views.delete(enemy);
+      for (const [item, particle] of particles) {
+        if (active.has(item)) continue;
+        container.removeParticle(particle);
+        particles.delete(item);
       }
     },
   };
 }
 
+export interface EnemyLayer {
+  container: ParticleContainer;
+  sync: (enemies: EntityStore<Enemy>) => void;
+}
+
+/** Placeholder circles for enemies (issue #5); a texture swaps in later with no change to the simulation. */
+export function createEnemyLayer(renderer: Renderer): EnemyLayer {
+  const texture = createCircleTexture(renderer, SHAMBLER_RADIUS, 0x8fbf5f);
+  const layer = createParticleLayer<Enemy>(texture);
+  return {
+    container: layer.container,
+    sync: (enemies) => layer.sync(enemies, (e) => e.x, (e) => e.y),
+  };
+}
+
 export interface PickupLayer {
-  container: Container;
-  /** Syncs child Graphics 1:1 with the store's active Carrots, positioning
-   * each from `carrot.x/y`. Views are keyed by object identity, same as
-   * `EnemyLayer.sync` — see its note on pooled-slot reuse. */
+  container: ParticleContainer;
   sync: (pickups: EntityStore<Carrot>) => void;
 }
 
-/**
- * Placeholder shapes for dropped Carrots (design spec §8); a texture swaps
- * in later with no change to the simulation (ADR 0001 / 0002).
- */
-export function createPickupLayer(): PickupLayer {
-  const container = new Container();
-  const views = new Map<Carrot, Graphics>();
-
+/** Placeholder circles for dropped Carrots (design spec §8); a texture swaps in later with no change to the simulation. */
+export function createPickupLayer(renderer: Renderer): PickupLayer {
+  const texture = createCircleTexture(renderer, CARROT_RADIUS, 0xe8952c);
+  const layer = createParticleLayer<Carrot>(texture);
   return {
-    container,
-    sync(pickups: EntityStore<Carrot>): void {
-      const active = new Set<Carrot>();
+    container: layer.container,
+    sync: (pickups) => layer.sync(pickups, (c) => c.x, (c) => c.y),
+  };
+}
 
-      pickups.forEachActive((carrot) => {
-        active.add(carrot);
-        let view = views.get(carrot);
-        if (!view) {
-          view = new Graphics().circle(0, 0, CARROT_RADIUS).fill(0xe8952c);
-          views.set(carrot, view);
-          container.addChild(view);
-        }
-        view.position.set(carrot.x, carrot.y);
-      });
+export interface SporeCloudLayer {
+  container: ParticleContainer;
+  sync: (clouds: EntityStore<SporeCloud>) => void;
+}
 
-      for (const [carrot, view] of views) {
-        if (active.has(carrot)) continue;
-        container.removeChild(view);
-        view.destroy();
-        views.delete(carrot);
-      }
-    },
+/** Placeholder circles for Spore Burst's lingering hazard clouds (design spec §6, Boss Phase 2). */
+export function createSporeCloudLayer(renderer: Renderer): SporeCloudLayer {
+  const texture = createCircleTexture(renderer, SPORE_BURST_CLOUD_RADIUS, 0x5fbf6f, 0.35);
+  const layer = createParticleLayer<SporeCloud>(texture);
+  return {
+    container: layer.container,
+    sync: (clouds) => layer.sync(clouds, (c) => c.x, (c) => c.y),
   };
 }
 
@@ -140,7 +161,9 @@ export interface BossView {
 
 /**
  * Placeholder shape for the Bloatlord (design spec §6, Wave 5); a texture
- * swaps in later with no change to the simulation (ADR 0001 / 0002).
+ * swaps in later with no change to the simulation (ADR 0001 / 0002). A
+ * singleton, so a plain `Graphics` shape (not a ParticleContainer, which is
+ * for batching many identical instances) is the right fit.
  */
 export function createBossView(): BossView {
   const view = new Graphics().circle(0, 0, BLOATLORD_RADIUS).fill(0x7a3b5e);
@@ -151,48 +174,6 @@ export function createBossView(): BossView {
     sync(boss: Boss | undefined): void {
       view.visible = boss !== undefined;
       if (boss) view.position.set(boss.x, boss.y);
-    },
-  };
-}
-
-export interface SporeCloudLayer {
-  container: Container;
-  /** Syncs child Graphics 1:1 with the store's active clouds, same
-   * identity-keyed reuse as `EnemyLayer.sync`. */
-  sync: (clouds: EntityStore<SporeCloud>) => void;
-}
-
-/**
- * Placeholder shapes for Spore Burst's lingering hazard clouds (design spec
- * §6, Boss Phase 2); a texture swaps in later with no change to the
- * simulation (ADR 0001 / 0002).
- */
-export function createSporeCloudLayer(): SporeCloudLayer {
-  const container = new Container();
-  const views = new Map<SporeCloud, Graphics>();
-
-  return {
-    container,
-    sync(clouds: EntityStore<SporeCloud>): void {
-      const active = new Set<SporeCloud>();
-
-      clouds.forEachActive((cloud) => {
-        active.add(cloud);
-        let view = views.get(cloud);
-        if (!view) {
-          view = new Graphics().circle(0, 0, cloud.radius).fill({ color: 0x5fbf6f, alpha: 0.35 });
-          views.set(cloud, view);
-          container.addChild(view);
-        }
-        view.position.set(cloud.x, cloud.y);
-      });
-
-      for (const [cloud, view] of views) {
-        if (active.has(cloud)) continue;
-        container.removeChild(view);
-        view.destroy();
-        views.delete(cloud);
-      }
     },
   };
 }

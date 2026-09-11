@@ -41,11 +41,11 @@ host.appendChild(app.canvas);
 // when it fits, fractional below 1x — and letterboxed by the CSS grid.
 const stage = new Container();
 stage.addChild(createArenaView());
-const pickupLayer = createPickupLayer();
+const pickupLayer = createPickupLayer(app.renderer);
 stage.addChild(pickupLayer.container);
-const sporeCloudLayer = createSporeCloudLayer();
+const sporeCloudLayer = createSporeCloudLayer(app.renderer);
 stage.addChild(sporeCloudLayer.container);
-const enemyLayer = createEnemyLayer();
+const enemyLayer = createEnemyLayer(app.renderer);
 stage.addChild(enemyLayer.container);
 const bossView = createBossView();
 stage.addChild(bossView.view);

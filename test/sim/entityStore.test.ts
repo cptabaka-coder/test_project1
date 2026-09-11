@@ -83,4 +83,51 @@ describe("createEntityStore", () => {
 
     expect(store.isActive(entity!)).toBe(false);
   });
+
+  it("spawnVacuumingOldest succeeds under capacity, same as spawn", () => {
+    const store = createEntityStore(2, makeDummy, resetDummy);
+
+    const entity = store.spawnVacuumingOldest((item) => {
+      item.hp = 5;
+    });
+
+    expect(entity.hp).toBe(5);
+    const seen: Dummy[] = [];
+    store.forEachActive((item) => seen.push(item));
+    expect(seen).toEqual([{ hp: 5, tag: "" }]);
+  });
+
+  it("spawnVacuumingOldest evicts the oldest active entity at capacity, never dropping the new one", () => {
+    const store = createEntityStore(2, makeDummy, resetDummy);
+    store.spawn((item) => {
+      item.tag = "oldest";
+    });
+    store.spawn((item) => {
+      item.tag = "newer";
+    });
+
+    const evicted = store.spawnVacuumingOldest((item) => {
+      item.tag = "vacuumed-in";
+    });
+
+    expect(evicted.tag).toBe("vacuumed-in");
+    // Still exactly at capacity — "oldest" is gone, replaced by the new entity.
+    const tags: string[] = [];
+    store.forEachActive((item) => tags.push(item.tag));
+    expect(tags.sort()).toEqual(["newer", "vacuumed-in"]);
+  });
+
+  it("setCapacity lowers the cap so spawn refuses sooner, for the perf degrade path", () => {
+    const store = createEntityStore(2, makeDummy, resetDummy);
+    store.spawn((item) => {
+      item.hp = 1;
+    });
+
+    store.setCapacity(1);
+
+    const second = store.spawn((item) => {
+      item.hp = 2;
+    });
+    expect(second).toBeUndefined(); // already at the lowered cap of 1
+  });
 });
