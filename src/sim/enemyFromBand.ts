@@ -22,6 +22,7 @@ export function initEnemyFromBand(
   enemy.contactDamage = scaledContactDamage(band.contactDamage, wave);
   enemy.flies = band.flies;
   enemy.lifestealPercent = band.lifestealPercent;
+  enemy.weakness = band.weakness;
   enemy.ranged = band.ranged ? { ...band.ranged, cooldownRemaining: 0 } : undefined;
   enemy.dash = band.dash
     ? { ...band.dash, cooldownRemaining: 0, activeSecondsRemaining: 0 }

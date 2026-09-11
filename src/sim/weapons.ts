@@ -33,3 +33,37 @@ export function meleeArcHits(
 
   return hits;
 }
+
+/**
+ * The Laser Pistol's hit detection: a straight, instant line from the origin
+ * along `facingAngle`, out to `range`. Hits the closest `pierceCount` active
+ * enemies whose circle the line passes through (design spec §5: "hitscan,
+ * pierces 2").
+ */
+export function hitscanLineHits(
+  originX: number,
+  originY: number,
+  facingAngle: number,
+  range: number,
+  pierceCount: number,
+  enemies: EntityStore<Enemy>,
+): Enemy[] {
+  const ux = Math.cos(facingAngle);
+  const uy = Math.sin(facingAngle);
+  const candidates: { enemy: Enemy; along: number }[] = [];
+
+  enemies.forEachActive((enemy) => {
+    const dx = enemy.x - originX;
+    const dy = enemy.y - originY;
+    const along = dx * ux + dy * uy; // distance along the ray
+    if (along < 0 || along > range) return;
+
+    const perpendicular = Math.abs(dx * uy - dy * ux); // distance from the ray
+    if (perpendicular > enemy.radius) return;
+
+    candidates.push({ enemy, along });
+  });
+
+  candidates.sort((a, b) => a.along - b.along);
+  return candidates.slice(0, pierceCount).map((c) => c.enemy);
+}

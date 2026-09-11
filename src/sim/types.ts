@@ -7,6 +7,7 @@ import {
   LOGICAL_WIDTH,
   WEAPON_SLOT_COUNT,
 } from "../data/constants";
+import type { WeaknessDef } from "../data/enemies";
 import { KNIFE, type WeaponDef } from "../data/weapons";
 import { createEntityStore, type EntityStore } from "./entityStore";
 import { generateWaveBudget } from "./waveDirector";
@@ -133,6 +134,8 @@ export interface Enemy {
   ranged: RangedAttackState | undefined;
   /** Present for the Fledgling; undefined for enemies that don't dash. */
   dash: DashState | undefined;
+  /** This enemy type's bonus-damage matchup, if any (design spec §6). */
+  weakness: WeaknessDef | undefined;
 }
 
 function createEnemy(): Enemy {
@@ -148,6 +151,7 @@ function createEnemy(): Enemy {
     lifestealPercent: 0,
     ranged: undefined,
     dash: undefined,
+    weakness: undefined,
   };
 }
 
@@ -163,10 +167,25 @@ function resetEnemy(enemy: Enemy): void {
   enemy.lifestealPercent = 0;
   enemy.ranged = undefined;
   enemy.dash = undefined;
+  enemy.weakness = undefined;
 }
 
-/** A fired shot (Spitter's spit, Stalker's blood-bolt — design spec §6). Travels in a
- * straight line and damages the bunny on contact. */
+/** A lobbed AoE shot's splash (the Plasma Cannon — design spec §5): detonates
+ * where it lands, dealing `damage` (direct) to the closest enemy plus falloff
+ * splash to everyone within `splashRadius`. */
+export interface AoeState {
+  splashRadius: number;
+  splashDamage: number;
+  familyStat: number;
+  globalDamagePercent: number;
+  weaponFamily: string;
+  weaponId: string;
+}
+
+/** A fired shot (Spitter's spit, Stalker's blood-bolt, the Plasma Cannon's lob
+ * — design spec §5-6). Travels in a straight line; an enemy shot damages the
+ * bunny on contact, a bunny shot with `aoe` set detonates when its `ttlSeconds`
+ * (its travel time) elapses. */
 export interface Projectile {
   x: number;
   y: number;
@@ -174,7 +193,8 @@ export interface Projectile {
   vy: number;
   radius: number;
   damage: number;
-  /** Seconds left before the shot expires unfired-and-forgotten (a miss). */
+  /** Seconds left before the shot expires unfired-and-forgotten (a miss) — or,
+   * for an `aoe` shot, before it lands and detonates. */
   ttlSeconds: number;
   /** % of this shot's damage, if it lands, returned to the firer as HP. */
   lifestealPercent: number;
@@ -182,6 +202,9 @@ export interface Projectile {
    * despawned (and its pooled slot reused) by the time the shot lands — callers
    * must check `enemies.isActive(owner)` before crediting the heal. */
   owner: Enemy | undefined;
+  firedBy: "enemy" | "bunny";
+  /** Set only for a lobbed AoE shot; undefined for a direct-hit shot. */
+  aoe: AoeState | undefined;
 }
 
 function createProjectile(): Projectile {
@@ -195,6 +218,8 @@ function createProjectile(): Projectile {
     ttlSeconds: 0,
     lifestealPercent: 0,
     owner: undefined,
+    firedBy: "enemy",
+    aoe: undefined,
   };
 }
 
@@ -206,6 +231,8 @@ function resetProjectile(projectile: Projectile): void {
   projectile.radius = 0;
   projectile.damage = 0;
   projectile.ttlSeconds = 0;
+  projectile.firedBy = "enemy";
+  projectile.aoe = undefined;
   projectile.lifestealPercent = 0;
   projectile.owner = undefined;
 }

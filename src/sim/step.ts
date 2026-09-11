@@ -12,13 +12,17 @@ import {
   SHAMBLER_RADIUS,
   SHAMBLER_SPEED,
 } from "../data/constants";
-import type { WeaponFamily } from "../data/weapons";
+import type { WeaponDef, WeaponFamily } from "../data/weapons";
 import { calculateDamage, rollCrit } from "./damage";
+import type { EntityStore } from "./entityStore";
 import { transition } from "./state";
 import { findNearestEnemy } from "./targeting";
-import type { FrameInputs, GameState, Stats } from "./types";
+import type { Rng } from "./rng";
+import type { Enemy, FrameInputs, GameState, Stats } from "./types";
 import { drainDueSpawns, pickSpawnPosition } from "./waveDirector";
-import { meleeArcHits } from "./weapons";
+import { splashFalloff } from "./splash";
+import { resolveWeaknessMultiplier } from "./weakness";
+import { hitscanLineHits, meleeArcHits } from "./weapons";
 
 function familyStatFor(family: WeaponFamily, stats: Stats): number {
   switch (family) {
@@ -28,6 +32,33 @@ function familyStatFor(family: WeaponFamily, stats: Stats): number {
       return stats.energyDamage;
     case "Plasma":
       return stats.explosiveDamage;
+  }
+}
+
+/** Applies one weapon's hit-list, running each enemy through the full damage
+ * pipeline (design spec §3-4: Family stat -> global Damage% -> Crit -> Armor/Weakness). */
+function applyWeaponHits(
+  hits: Enemy[],
+  baseDamage: number,
+  weapon: WeaponDef,
+  stats: Stats,
+  rng: Rng,
+  enemies: EntityStore<Enemy>,
+): void {
+  const familyStat = familyStatFor(weapon.family, stats);
+  for (const enemy of hits) {
+    const isCrit = rollCrit(stats.critChancePercent, rng);
+    const weaknessMultiplier = resolveWeaknessMultiplier(enemy.weakness, weapon.family, weapon.id);
+    const damage = calculateDamage({
+      baseDamage,
+      familyStat,
+      globalDamagePercent: stats.damagePercent,
+      isCrit,
+      targetArmor: 0,
+      weaknessMultiplier,
+    });
+    enemy.hp -= damage;
+    if (enemy.hp <= 0) enemies.despawn(enemy);
   }
 }
 
@@ -79,6 +110,7 @@ export function step(
       enemy.maxHp = SHAMBLER_HP;
       enemy.speed = SHAMBLER_SPEED;
       enemy.contactDamage = SHAMBLER_CONTACT_DAMAGE;
+      enemy.weakness = { against: "Plasma", multiplier: 1.3 }; // design spec §6
     });
     return spawned !== undefined;
   });
@@ -145,10 +177,54 @@ export function step(
   });
 
   state.projectiles.forEachActive((p) => {
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
+    // Never overshoot past a lobbed shot's landing point in one big-dt tick.
+    const moveDt = Math.min(dt, Math.max(0, p.ttlSeconds));
+    p.x += p.vx * moveDt;
+    p.y += p.vy * moveDt;
     p.ttlSeconds -= dt;
-    if (p.ttlSeconds <= 0) state.projectiles.despawn(p);
+    if (p.ttlSeconds > 0) return;
+
+    const aoe = p.aoe;
+    if (aoe) {
+      let closest: Enemy | undefined;
+      let closestDistance = Infinity;
+      const victims: { enemy: Enemy; distance: number }[] = [];
+
+      state.enemies.forEachActive((enemy) => {
+        const ddx = enemy.x - p.x;
+        const ddy = enemy.y - p.y;
+        const distance = Math.hypot(ddx, ddy);
+        if (distance > aoe.splashRadius) return;
+        victims.push({ enemy, distance });
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closest = enemy;
+        }
+      });
+
+      for (const { enemy, distance } of victims) {
+        const isCrit = rollCrit(state.bunny.stats.critChancePercent, state.rng);
+        const weaknessMultiplier = resolveWeaknessMultiplier(
+          enemy.weakness,
+          aoe.weaponFamily,
+          aoe.weaponId,
+        );
+        const splashPortion = aoe.splashDamage * splashFalloff(distance, aoe.splashRadius);
+        const directBonus = enemy === closest ? p.damage : 0;
+        const damage = calculateDamage({
+          baseDamage: splashPortion + directBonus,
+          familyStat: aoe.familyStat,
+          globalDamagePercent: aoe.globalDamagePercent,
+          isCrit,
+          targetArmor: 0,
+          weaknessMultiplier,
+        });
+        enemy.hp -= damage;
+        if (enemy.hp <= 0) state.enemies.despawn(enemy);
+      }
+    }
+
+    state.projectiles.despawn(p);
   });
 
   for (const slot of state.bunny.weaponSlots) {
@@ -166,28 +242,73 @@ export function step(
     slot.cooldownSeconds = 1 / attacksPerSecond;
 
     const facingAngle = Math.atan2(target.y - state.bunny.y, target.x - state.bunny.x);
-    const hits = meleeArcHits(
-      state.bunny.x,
-      state.bunny.y,
-      facingAngle,
-      levelStats.range,
-      levelStats.arcDegrees ?? 360,
-      state.enemies,
-    );
-    const familyStat = familyStatFor(slot.weapon.family, state.bunny.stats);
 
-    for (const enemy of hits) {
-      const isCrit = rollCrit(state.bunny.stats.critChancePercent, state.rng);
-      const damage = calculateDamage({
-        baseDamage: levelStats.damage,
-        familyStat,
-        globalDamagePercent: state.bunny.stats.damagePercent,
-        isCrit,
-        targetArmor: 0,
-        weaknessMultiplier: 1,
-      });
-      enemy.hp -= damage;
-      if (enemy.hp <= 0) state.enemies.despawn(enemy);
+    switch (slot.weapon.deliveryMode) {
+      case "melee-arc": {
+        const hits = meleeArcHits(
+          state.bunny.x,
+          state.bunny.y,
+          facingAngle,
+          levelStats.range,
+          levelStats.arcDegrees ?? 360,
+          state.enemies,
+        );
+        applyWeaponHits(hits, levelStats.damage, slot.weapon, state.bunny.stats, state.rng, state.enemies);
+        break;
+      }
+      case "melee-single": {
+        const dx = target.x - state.bunny.x;
+        const dy = target.y - state.bunny.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance <= levelStats.range + target.radius) {
+          applyWeaponHits(
+            [target],
+            levelStats.damage,
+            slot.weapon,
+            state.bunny.stats,
+            state.rng,
+            state.enemies,
+          );
+        }
+        break;
+      }
+      case "hitscan": {
+        const hits = hitscanLineHits(
+          state.bunny.x,
+          state.bunny.y,
+          facingAngle,
+          levelStats.range,
+          levelStats.pierceCount ?? 1,
+          state.enemies,
+        );
+        applyWeaponHits(hits, levelStats.damage, slot.weapon, state.bunny.stats, state.rng, state.enemies);
+        break;
+      }
+      case "lobbed-aoe": {
+        const dx = target.x - state.bunny.x;
+        const dy = target.y - state.bunny.y;
+        const distance = Math.hypot(dx, dy);
+        const speed = levelStats.projectileSpeed ?? 1;
+        state.projectiles.spawn((p) => {
+          p.x = state.bunny.x;
+          p.y = state.bunny.y;
+          p.vx = distance === 0 ? 0 : (dx / distance) * speed;
+          p.vy = distance === 0 ? 0 : (dy / distance) * speed;
+          p.radius = PROJECTILE_RADIUS;
+          p.damage = levelStats.damage;
+          p.ttlSeconds = distance / speed; // detonates on arrival at the lobbed target
+          p.firedBy = "bunny";
+          p.aoe = {
+            splashRadius: levelStats.splashRadius ?? 0,
+            splashDamage: levelStats.splashDamage ?? 0,
+            familyStat: familyStatFor(slot.weapon!.family, state.bunny.stats),
+            globalDamagePercent: state.bunny.stats.damagePercent,
+            weaponFamily: slot.weapon!.family,
+            weaponId: slot.weapon!.id,
+          };
+        });
+        break;
+      }
     }
   }
 
@@ -212,6 +333,7 @@ export function step(
 
   if (state.bunny.iframeSeconds <= 0) {
     state.projectiles.forEachActive((p) => {
+      if (p.firedBy !== "enemy") return; // only enemy shots can damage the bunny
       if (state.bunny.iframeSeconds > 0) return; // already hit this tick
       const dx = p.x - state.bunny.x;
       const dy = p.y - state.bunny.y;
