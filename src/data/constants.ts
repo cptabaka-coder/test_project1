@@ -48,3 +48,13 @@ export const WEAPON_SLOT_COUNT = 6;
 /** A fired shot despawns (a miss) if it hasn't hit anything by then. */
 export const PROJECTILE_TTL_SECONDS = 3;
 export const PROJECTILE_RADIUS = 4;
+
+/** Carrots (design spec §8): the Run's only resource, dropped by kills. */
+export const CARROT_VALUE_NORMAL = 1;
+export const CARROT_VALUE_ELITE = 3;
+export const CARROT_RADIUS = 5;
+/** Not specified in the design doc beyond "fly toward bunny within Pickup Range". */
+export const CARROT_FLY_SPEED = 220;
+/** Base Pickup Range in px before the Pickup Range Stat's bonus; not given
+ * numerically in the design doc. */
+export const BASE_PICKUP_RANGE = 60;

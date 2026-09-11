@@ -1,7 +1,12 @@
 import {
   ARENA_MARGIN,
+  BASE_PICKUP_RANGE,
   BUNNY_IFRAME_SECONDS,
   BUNNY_MOVE_SPEED,
+  CARROT_FLY_SPEED,
+  CARROT_RADIUS,
+  CARROT_VALUE_ELITE,
+  CARROT_VALUE_NORMAL,
   FIXED_DT,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
@@ -14,12 +19,13 @@ import {
 } from "../data/constants";
 import type { WeaponDef, WeaponFamily } from "../data/weapons";
 import { calculateDamage, rollCrit } from "./damage";
-import type { EntityStore } from "./entityStore";
 import { transition } from "./state";
 import { findNearestEnemy } from "./targeting";
-import type { Rng } from "./rng";
 import type { Enemy, FrameInputs, GameState, Stats } from "./types";
 import { drainDueSpawns, pickSpawnPosition } from "./waveDirector";
+import { STAT_GAIN_POOL } from "../data/levelUpPool";
+import { levelForCarrots } from "./leveling";
+import { rollLevelUpOptions } from "./levelUpRoll";
 import { splashFalloff } from "./splash";
 import { resolveWeaknessMultiplier } from "./weakness";
 import { hitscanLineHits, meleeArcHits } from "./weapons";
@@ -35,30 +41,39 @@ function familyStatFor(family: WeaponFamily, stats: Stats): number {
   }
 }
 
+/** Despawns a dead enemy and drops its Carrot (design spec §8: 1 normal / 3 Elite). */
+function killEnemy(state: GameState, enemy: Enemy): void {
+  state.enemies.despawn(enemy);
+  state.pickups.spawn((carrot) => {
+    carrot.x = enemy.x;
+    carrot.y = enemy.y;
+    carrot.radius = CARROT_RADIUS;
+    carrot.value = enemy.isElite ? CARROT_VALUE_ELITE : CARROT_VALUE_NORMAL;
+  });
+}
+
 /** Applies one weapon's hit-list, running each enemy through the full damage
  * pipeline (design spec §3-4: Family stat -> global Damage% -> Crit -> Armor/Weakness). */
 function applyWeaponHits(
   hits: Enemy[],
   baseDamage: number,
   weapon: WeaponDef,
-  stats: Stats,
-  rng: Rng,
-  enemies: EntityStore<Enemy>,
+  state: GameState,
 ): void {
-  const familyStat = familyStatFor(weapon.family, stats);
+  const familyStat = familyStatFor(weapon.family, state.bunny.stats);
   for (const enemy of hits) {
-    const isCrit = rollCrit(stats.critChancePercent, rng);
+    const isCrit = rollCrit(state.bunny.stats.critChancePercent, state.rng);
     const weaknessMultiplier = resolveWeaknessMultiplier(enemy.weakness, weapon.family, weapon.id);
     const damage = calculateDamage({
       baseDamage,
       familyStat,
-      globalDamagePercent: stats.damagePercent,
+      globalDamagePercent: state.bunny.stats.damagePercent,
       isCrit,
       targetArmor: 0,
       weaknessMultiplier,
     });
     enemy.hp -= damage;
-    if (enemy.hp <= 0) enemies.despawn(enemy);
+    if (enemy.hp <= 0) killEnemy(state, enemy);
   }
 }
 
@@ -75,7 +90,7 @@ export function step(
   inputs: FrameInputs,
   dt: number = FIXED_DT,
 ): GameState {
-  if (state.phase === "GameOver") {
+  if (state.phase === "GameOver" || state.phase === "LevelUp") {
     state.tick += 1;
     return state;
   }
@@ -220,12 +235,40 @@ export function step(
           weaknessMultiplier,
         });
         enemy.hp -= damage;
-        if (enemy.hp <= 0) state.enemies.despawn(enemy);
+        if (enemy.hp <= 0) killEnemy(state, enemy);
       }
     }
 
     state.projectiles.despawn(p);
   });
+
+  state.pickups.forEachActive((carrot) => {
+    const dx = state.bunny.x - carrot.x;
+    const dy = state.bunny.y - carrot.y;
+    const distance = Math.hypot(dx, dy);
+
+    const touchRange = state.bunny.radius + carrot.radius;
+    if (distance <= touchRange) {
+      state.bunny.carrots += carrot.value;
+      state.pickups.despawn(carrot);
+      return;
+    }
+
+    const pickupRange = BASE_PICKUP_RANGE + state.bunny.stats.pickupRange;
+    if (distance <= pickupRange) {
+      carrot.x += (dx / distance) * CARROT_FLY_SPEED * dt;
+      carrot.y += (dy / distance) * CARROT_FLY_SPEED * dt;
+    }
+  });
+
+  const newLevel = levelForCarrots(state.bunny.carrots);
+  if (newLevel > state.bunny.level) {
+    state.bunny.level = newLevel;
+    state.pendingLevelUpOptions = rollLevelUpOptions(STAT_GAIN_POOL, state.rng, 3);
+    state.phase = transition(state.phase, "LevelUp");
+    state.tick += 1;
+    return state;
+  }
 
   for (const slot of state.bunny.weaponSlots) {
     if (!slot.weapon) continue;
@@ -253,7 +296,7 @@ export function step(
           levelStats.arcDegrees ?? 360,
           state.enemies,
         );
-        applyWeaponHits(hits, levelStats.damage, slot.weapon, state.bunny.stats, state.rng, state.enemies);
+        applyWeaponHits(hits, levelStats.damage, slot.weapon, state);
         break;
       }
       case "melee-single": {
@@ -261,14 +304,7 @@ export function step(
         const dy = target.y - state.bunny.y;
         const distance = Math.hypot(dx, dy);
         if (distance <= levelStats.range + target.radius) {
-          applyWeaponHits(
-            [target],
-            levelStats.damage,
-            slot.weapon,
-            state.bunny.stats,
-            state.rng,
-            state.enemies,
-          );
+          applyWeaponHits([target], levelStats.damage, slot.weapon, state);
         }
         break;
       }
@@ -281,7 +317,7 @@ export function step(
           levelStats.pierceCount ?? 1,
           state.enemies,
         );
-        applyWeaponHits(hits, levelStats.damage, slot.weapon, state.bunny.stats, state.rng, state.enemies);
+        applyWeaponHits(hits, levelStats.damage, slot.weapon, state);
         break;
       }
       case "lobbed-aoe": {

@@ -4,8 +4,10 @@ import { createInputSampler } from "./game/input";
 import { FIXED_DT, LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./data/constants";
 import { createInitialState } from "./sim/types";
 import { step } from "./sim/step";
-import { createArenaView, createBunnyView, createEnemyLayer } from "./systems/render";
+import { createArenaView, createBunnyView, createEnemyLayer, createPickupLayer } from "./systems/render";
 import { createHud } from "./ui/hud";
+import { createLevelUpOverlay } from "./ui/levelUp";
+import { resolveLevelUpChoice } from "./sim/levelUp";
 
 const host = document.getElementById("app");
 if (!host) throw new Error("#app host element is missing");
@@ -33,6 +35,8 @@ host.appendChild(app.canvas);
 // when it fits, fractional below 1x — and letterboxed by the CSS grid.
 const stage = new Container();
 stage.addChild(createArenaView());
+const pickupLayer = createPickupLayer();
+stage.addChild(pickupLayer.container);
 const enemyLayer = createEnemyLayer();
 stage.addChild(enemyLayer.container);
 const bunnyView = createBunnyView();
@@ -40,6 +44,7 @@ stage.addChild(bunnyView);
 app.stage.addChild(stage);
 
 const hud = createHud(document.body);
+const levelUpOverlay = createLevelUpOverlay(document.body);
 
 function fit(): void {
   const raw = Math.min(
@@ -69,7 +74,9 @@ const loop = createLoop({
   render: (s) => {
     bunnyView.position.set(s.bunny.x, s.bunny.y);
     enemyLayer.sync(s.enemies);
+    pickupLayer.sync(s.pickups);
     hud.update(s.bunny.hp, s.bunny.maxHp, s.phase === "GameOver");
+    levelUpOverlay.update(s.pendingLevelUpOptions, (choice) => resolveLevelUpChoice(s, choice));
     readout.textContent = `seed 0x${(seed >>> 0).toString(16)} · tick ${s.tick}`;
   },
   fixedDtMs: FIXED_DT * 1000,

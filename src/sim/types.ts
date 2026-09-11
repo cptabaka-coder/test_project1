@@ -2,12 +2,14 @@ import {
   BUNNY_MAX_HP,
   BUNNY_RADIUS,
   CAP_ENEMIES,
+  CAP_PICKUPS,
   CAP_PROJECTILES,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
   WEAPON_SLOT_COUNT,
 } from "../data/constants";
 import type { WeaknessDef } from "../data/enemies";
+import type { StatGainOption } from "../data/levelUpPool";
 import { KNIFE, type WeaponDef } from "../data/weapons";
 import { createEntityStore, type EntityStore } from "./entityStore";
 import { generateWaveBudget } from "./waveDirector";
@@ -94,6 +96,10 @@ export interface Bunny {
   iframeSeconds: number;
   stats: Stats;
   weaponSlots: WeaponSlot[];
+  /** Total Carrots ever collected (design spec §8): doubles as XP and stays
+   * fully spendable — collecting never subtracts from it. */
+  carrots: number;
+  level: number;
 }
 
 /** A ranged attack's tuning plus its own firing cooldown (design spec §6: Spitter, Stalker). */
@@ -136,6 +142,9 @@ export interface Enemy {
   dash: DashState | undefined;
   /** This enemy type's bonus-damage matchup, if any (design spec §6). */
   weakness: WeaknessDef | undefined;
+  /** Elites drop more Carrots on death (design spec §8). Nothing spawns an
+   * Elite yet — this just makes the drop-amount rule correct once one does. */
+  isElite: boolean;
 }
 
 function createEnemy(): Enemy {
@@ -152,6 +161,7 @@ function createEnemy(): Enemy {
     ranged: undefined,
     dash: undefined,
     weakness: undefined,
+    isElite: false,
   };
 }
 
@@ -168,6 +178,27 @@ function resetEnemy(enemy: Enemy): void {
   enemy.ranged = undefined;
   enemy.dash = undefined;
   enemy.weakness = undefined;
+  enemy.isElite = false;
+}
+
+/** A dropped Carrot (design spec §8): sits still until the bunny is within
+ * Pickup Range, then flies to it and is collected on contact. */
+export interface Carrot {
+  x: number;
+  y: number;
+  radius: number;
+  value: number;
+}
+
+function createCarrot(): Carrot {
+  return { x: 0, y: 0, radius: 0, value: 0 };
+}
+
+function resetCarrot(carrot: Carrot): void {
+  carrot.x = 0;
+  carrot.y = 0;
+  carrot.radius = 0;
+  carrot.value = 0;
 }
 
 /** A lobbed AoE shot's splash (the Plasma Cannon — design spec §5): detonates
@@ -247,10 +278,13 @@ export interface GameState {
   bunny: Bunny;
   enemies: EntityStore<Enemy>;
   projectiles: EntityStore<Projectile>;
+  pickups: EntityStore<Carrot>;
   /** Remaining Wave-1 spawn timestamps, seconds from Wave start (design spec §7). */
   waveSpawnSchedule: number[];
   /** Seconds elapsed in the current Wave. */
   waveElapsedSeconds: number;
+  /** The rolled 1-of-3 choices while `phase === "LevelUp"`; empty otherwise. */
+  pendingLevelUpOptions: StatGainOption[];
 }
 
 /** Per-frame player intent, sampled by the loop and handed to `step`. */
@@ -275,11 +309,15 @@ export function createInitialState(seed: number): GameState {
       iframeSeconds: 0,
       stats: createDefaultStats(),
       weaponSlots: createWeaponSlots(),
+      carrots: 0,
+      level: 1,
     },
     enemies: createEntityStore(CAP_ENEMIES, createEnemy, resetEnemy),
     projectiles: createEntityStore(CAP_PROJECTILES, createProjectile, resetProjectile),
+    pickups: createEntityStore(CAP_PICKUPS, createCarrot, resetCarrot),
     waveSpawnSchedule: generateWaveBudget(1, rng),
     waveElapsedSeconds: 0,
+    pendingLevelUpOptions: [],
   };
 }
 

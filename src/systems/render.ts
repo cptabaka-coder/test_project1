@@ -2,12 +2,13 @@ import { Container, Graphics } from "pixi.js";
 import {
   ARENA_MARGIN,
   BUNNY_RADIUS,
+  CARROT_RADIUS,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
   SHAMBLER_RADIUS,
 } from "../data/constants";
 import type { EntityStore } from "../sim/entityStore";
-import type { Enemy } from "../sim/types";
+import type { Carrot, Enemy } from "../sim/types";
 
 /**
  * Builds the static scene for issue #1: the logical stage backdrop and the
@@ -83,6 +84,48 @@ export function createEnemyLayer(): EnemyLayer {
         container.removeChild(view);
         view.destroy();
         views.delete(enemy);
+      }
+    },
+  };
+}
+
+export interface PickupLayer {
+  container: Container;
+  /** Syncs child Graphics 1:1 with the store's active Carrots, positioning
+   * each from `carrot.x/y`. Views are keyed by object identity, same as
+   * `EnemyLayer.sync` — see its note on pooled-slot reuse. */
+  sync: (pickups: EntityStore<Carrot>) => void;
+}
+
+/**
+ * Placeholder shapes for dropped Carrots (design spec §8); a texture swaps
+ * in later with no change to the simulation (ADR 0001 / 0002).
+ */
+export function createPickupLayer(): PickupLayer {
+  const container = new Container();
+  const views = new Map<Carrot, Graphics>();
+
+  return {
+    container,
+    sync(pickups: EntityStore<Carrot>): void {
+      const active = new Set<Carrot>();
+
+      pickups.forEachActive((carrot) => {
+        active.add(carrot);
+        let view = views.get(carrot);
+        if (!view) {
+          view = new Graphics().circle(0, 0, CARROT_RADIUS).fill(0xe8952c);
+          views.set(carrot, view);
+          container.addChild(view);
+        }
+        view.position.set(carrot.x, carrot.y);
+      });
+
+      for (const [carrot, view] of views) {
+        if (active.has(carrot)) continue;
+        container.removeChild(view);
+        view.destroy();
+        views.delete(carrot);
       }
     },
   };
