@@ -1,5 +1,7 @@
 import { SHOP_OFFER_COUNT } from "../data/constants";
+import { ALL_ITEMS } from "../data/items";
 import { ALL_WEAPONS } from "../data/weapons";
+import { itemPrice } from "./items";
 import type { Rng } from "./rng";
 import type { GameState, ShopOffer } from "./types";
 
@@ -33,7 +35,7 @@ export function sellBackValue(purchasePrice: number): number {
  */
 export function buyWeapon(state: GameState, offerIndex: number): boolean {
   const offer = state.shopOffers[offerIndex];
-  if (!offer) return false;
+  if (!offer || offer.kind !== "weapon") return false;
   if (state.bunny.carrots < offer.price) return false;
 
   const owned = state.bunny.weaponSlots.find((slot) => slot.weapon === offer.weapon);
@@ -67,25 +69,35 @@ export function sellWeapon(state: GameState, slotIndex: number): void {
 }
 
 /**
- * Rolls the Shop's 4 offers (design spec §9), Weapons only for now — Items
- * land in issue #11. Each offer's Level is capped both by `wave`'s gating
- * and by how many Levels that Weapon actually has data for (only Level I is
+ * Rolls the Shop's 4 offers (design spec §9-10), mixing Weapons and Items
+ * 50/50. A Weapon offer's Level is capped both by `wave`'s gating and by
+ * how many Levels that Weapon actually has data for (only Level I is
  * populated so far, issues #6/#8), so every rolled offer is always playable.
  */
-export function generateShopOffers(rng: Rng, wave: number): ShopOffer[] {
+export function generateShopOffers(
+  rng: Rng,
+  wave: number,
+  itemCounts: Record<string, number>,
+): ShopOffer[] {
   const gatedLevel = maxOfferLevelForWave(wave);
 
-  return Array.from({ length: SHOP_OFFER_COUNT }, () => {
-    const weapon = ALL_WEAPONS[rng.int(ALL_WEAPONS.length)]!;
-    const level = Math.min(gatedLevel, weapon.levels.length);
-    return { weapon, level, price: weapon.basePrice * level };
+  return Array.from({ length: SHOP_OFFER_COUNT }, (): ShopOffer => {
+    if (rng.next() < 0.5) {
+      const weapon = ALL_WEAPONS[rng.int(ALL_WEAPONS.length)]!;
+      const level = Math.min(gatedLevel, weapon.levels.length);
+      return { kind: "weapon", weapon, level, price: weapon.basePrice * level };
+    }
+
+    const item = ALL_ITEMS[rng.int(ALL_ITEMS.length)]!;
+    const price = itemPrice(item.basePrice, itemCounts[item.id] ?? 0, wave);
+    return { kind: "item", item, price };
   });
 }
 
 /** Opens/refreshes the Shop for the current Wave (design spec §9): fresh
  * offers, every Lock cleared, Reroll cost back down to 1. */
 export function resetShopForWave(state: GameState): void {
-  state.shopOffers = generateShopOffers(state.rng, state.wave);
+  state.shopOffers = generateShopOffers(state.rng, state.wave, state.bunny.itemCounts);
   state.shopLocked = state.shopLocked.map(() => false);
   state.shopRerollUses = 0;
 }
@@ -101,7 +113,7 @@ export function rerollShopOffers(state: GameState): boolean {
   state.bunny.carrots -= cost;
   state.shopRerollUses += 1;
 
-  const freshOffers = generateShopOffers(state.rng, state.wave);
+  const freshOffers = generateShopOffers(state.rng, state.wave, state.bunny.itemCounts);
   state.shopOffers = state.shopOffers.map((offer, i) =>
     state.shopLocked[i] ? offer : freshOffers[i],
   );

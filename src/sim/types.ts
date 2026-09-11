@@ -10,6 +10,7 @@ import {
   WEAPON_SLOT_COUNT,
 } from "../data/constants";
 import type { WeaknessDef } from "../data/enemies";
+import type { ItemDef } from "../data/items";
 import type { StatGainOption } from "../data/levelUpPool";
 import { KNIFE, type WeaponDef } from "../data/weapons";
 import { createEntityStore, type EntityStore } from "./entityStore";
@@ -90,12 +91,10 @@ function createWeaponSlots(): WeaponSlot[] {
   return slots;
 }
 
-/** A Shop offer slot (design spec §9). Items mix in once issue #11 lands. */
-export interface ShopOffer {
-  weapon: WeaponDef;
-  level: number;
-  price: number;
-}
+/** A Shop offer slot (design spec §9): a Weapon or an Item (design spec §10). */
+export type ShopOffer =
+  | { kind: "weapon"; weapon: WeaponDef; level: number; price: number }
+  | { kind: "item"; item: ItemDef; price: number };
 
 /** The player-controlled bunny (design spec §3). */
 export interface Bunny {
@@ -115,6 +114,9 @@ export interface Bunny {
    * decreases, so spending never "un-levels" the bunny. */
   totalCarrotsEarned: number;
   level: number;
+  /** How many of each Item (by id) the bunny owns (design spec §10) — Items
+   * are passive and stackable, never occupying a Weapon Slot. */
+  itemCounts: Record<string, number>;
 }
 
 /** A ranged attack's tuning plus its own firing cooldown (design spec §6: Spitter, Stalker). */
@@ -335,6 +337,7 @@ export function createInitialState(seed: number): GameState {
       carrots: 0,
       totalCarrotsEarned: 0,
       level: 1,
+      itemCounts: {},
     },
     enemies: createEntityStore(CAP_ENEMIES, createEnemy, resetEnemy),
     projectiles: createEntityStore(CAP_PROJECTILES, createProjectile, resetProjectile),

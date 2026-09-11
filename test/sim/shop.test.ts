@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ALL_ITEMS } from "../../src/data/items";
 import { ALL_WEAPONS, KNIFE, WOODEN_STAKE } from "../../src/data/weapons";
 import {
   maxOfferLevelForWave,
@@ -53,7 +54,7 @@ describe("buyWeapon", () => {
     const state = createInitialState(1);
     state.bunny.carrots = 20;
     state.bunny.totalCarrotsEarned = 20;
-    state.shopOffers[0] = { weapon: WOODEN_STAKE, level: 1, price: 14 };
+    state.shopOffers[0] = { kind: "weapon", weapon: WOODEN_STAKE, level: 1, price: 14 };
 
     const bought = buyWeapon(state, 0);
 
@@ -68,7 +69,7 @@ describe("buyWeapon", () => {
   it("fails without enough Carrots, leaving state unchanged", () => {
     const state = createInitialState(1);
     state.bunny.carrots = 5;
-    state.shopOffers[0] = { weapon: WOODEN_STAKE, level: 1, price: 14 };
+    state.shopOffers[0] = { kind: "weapon", weapon: WOODEN_STAKE, level: 1, price: 14 };
 
     const bought = buyWeapon(state, 0);
 
@@ -83,7 +84,7 @@ describe("buyWeapon", () => {
     for (const slot of state.bunny.weaponSlots) {
       slot.weapon = KNIFE; // fill every Slot with something else
     }
-    state.shopOffers[0] = { weapon: WOODEN_STAKE, level: 1, price: 14 };
+    state.shopOffers[0] = { kind: "weapon", weapon: WOODEN_STAKE, level: 1, price: 14 };
 
     const bought = buyWeapon(state, 0);
 
@@ -111,14 +112,18 @@ describe("sellWeapon", () => {
 });
 
 describe("generateShopOffers", () => {
-  it("fills 4 offer slots, every one a real Weapon at a price", () => {
-    const offers = generateShopOffers(new Rng(1), 1);
+  it("fills 4 offer slots, each a real Weapon or Item at a price", () => {
+    const offers = generateShopOffers(new Rng(1), 1, {});
 
     expect(offers).toHaveLength(4);
     for (const offer of offers) {
-      expect(ALL_WEAPONS).toContain(offer.weapon);
       expect(offer.price).toBeGreaterThan(0);
-      expect(offer.level).toBe(1);
+      if (offer.kind === "weapon") {
+        expect(ALL_WEAPONS).toContain(offer.weapon);
+        expect(offer.level).toBe(1);
+      } else {
+        expect(ALL_ITEMS).toContain(offer.item);
+      }
     }
   });
 });
