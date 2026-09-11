@@ -1,9 +1,18 @@
 import {
+  BLOATLORD_CONTACT_DAMAGE,
+  BLOATLORD_HP,
+  BLOATLORD_RADIUS,
+  GROUND_POUND_COOLDOWN_PHASE_1,
+  SPORE_BURST_COOLDOWN_SECONDS,
+  SUMMON_COOLDOWN_SECONDS,
+} from "../data/boss";
+import {
   BUNNY_MAX_HP,
   BUNNY_RADIUS,
   CAP_ENEMIES,
   CAP_PICKUPS,
   CAP_PROJECTILES,
+  CAP_SPORE_CLOUDS,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
   SHOP_OFFER_COUNT,
@@ -285,6 +294,72 @@ function resetProjectile(projectile: Projectile): void {
   projectile.owner = undefined;
 }
 
+/** A Boss attack's cooldown + telegraph timing, shared by Ground-Pound,
+ * Summon and Spore Burst (design spec §6: "every attack Telegraphed"). */
+export interface TelegraphedAttack {
+  cooldownSeconds: number;
+  cooldownRemaining: number;
+  /** > 0 while winding up; the attack lands the tick this reaches 0. */
+  telegraphRemaining: number;
+}
+
+function createTelegraphedAttack(cooldownSeconds: number): TelegraphedAttack {
+  return { cooldownSeconds, cooldownRemaining: 0, telegraphRemaining: 0 };
+}
+
+/** The Bloatlord (design spec §6 Boss, Wave 5). A singleton — undefined until spawned. */
+export interface Boss {
+  x: number;
+  y: number;
+  radius: number;
+  hp: number;
+  maxHp: number;
+  phase: 1 | 2;
+  contactDamage: number;
+  groundPound: TelegraphedAttack;
+  summon: TelegraphedAttack;
+  /** Only ticks/fires in Phase 2. */
+  sporeBurst: TelegraphedAttack;
+}
+
+/** Builds a fresh Bloatlord (design spec §6, Wave 5) at full HP, Phase 1. */
+export function createBoss(x: number, y: number): Boss {
+  return {
+    x,
+    y,
+    radius: BLOATLORD_RADIUS,
+    hp: BLOATLORD_HP,
+    maxHp: BLOATLORD_HP,
+    phase: 1,
+    contactDamage: BLOATLORD_CONTACT_DAMAGE,
+    groundPound: createTelegraphedAttack(GROUND_POUND_COOLDOWN_PHASE_1),
+    summon: createTelegraphedAttack(SUMMON_COOLDOWN_SECONDS),
+    sporeBurst: createTelegraphedAttack(SPORE_BURST_COOLDOWN_SECONDS),
+  };
+}
+
+/** A lingering Spore Burst hazard (design spec §6, Phase 2): damages the
+ * bunny each second stood in it, then expires. */
+export interface SporeCloud {
+  x: number;
+  y: number;
+  radius: number;
+  damagePerSecond: number;
+  secondsRemaining: number;
+}
+
+function createSporeCloud(): SporeCloud {
+  return { x: 0, y: 0, radius: 0, damagePerSecond: 0, secondsRemaining: 0 };
+}
+
+function resetSporeCloud(cloud: SporeCloud): void {
+  cloud.x = 0;
+  cloud.y = 0;
+  cloud.radius = 0;
+  cloud.damagePerSecond = 0;
+  cloud.secondsRemaining = 0;
+}
+
 /** Everything the simulation needs to advance one fixed step. */
 export interface GameState {
   phase: RunPhase;
@@ -310,6 +385,10 @@ export interface GameState {
   shopLocked: boolean[];
   /** Rerolls used since the Shop last reset for a Wave. */
   shopRerollUses: number;
+  /** The Bloatlord (design spec §6, Wave 5); undefined until spawned. Not
+   * reachable through actual play yet — Wave 5 isn't wired (issue #12). */
+  boss: Boss | undefined;
+  sporeClouds: EntityStore<SporeCloud>;
 }
 
 /** Per-frame player intent, sampled by the loop and handed to `step`. */
@@ -349,6 +428,8 @@ export function createInitialState(seed: number): GameState {
     shopOffers: Array.from({ length: SHOP_OFFER_COUNT }, () => undefined),
     shopLocked: Array.from({ length: SHOP_OFFER_COUNT }, () => false),
     shopRerollUses: 0,
+    boss: undefined,
+    sporeClouds: createEntityStore(CAP_SPORE_CLOUDS, createSporeCloud, resetSporeCloud),
   };
 }
 

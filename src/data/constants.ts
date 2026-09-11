@@ -48,6 +48,10 @@ export const WEAPON_SLOT_COUNT = 6;
 /** The Shop's offer slots (design spec §9). */
 export const SHOP_OFFER_COUNT = 4;
 
+/** Spore Burst clouds (design spec §6, Boss Phase 2): at most 3 lob at once,
+ * lingering — a small cap comfortably covers overlap between casts. */
+export const CAP_SPORE_CLOUDS = 12;
+
 /** A fired shot despawns (a miss) if it hasn't hit anything by then. */
 export const PROJECTILE_TTL_SECONDS = 3;
 export const PROJECTILE_RADIUS = 4;

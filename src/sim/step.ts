@@ -18,7 +18,25 @@ import {
   SHAMBLER_SPEED,
 } from "../data/constants";
 import type { WeaponDef, WeaponFamily } from "../data/weapons";
+import {
+  BLOATLORD_SPEED_PHASE_1,
+  BLOATLORD_SPEED_PHASE_2_MULTIPLIER,
+  GROUND_POUND_COOLDOWN_PHASE_2,
+  GROUND_POUND_DAMAGE,
+  GROUND_POUND_RADIUS,
+  SPORE_BURST_CLOUD_COUNT,
+  SPORE_BURST_CLOUD_DAMAGE_PER_SECOND,
+  SPORE_BURST_CLOUD_DURATION_SECONDS,
+  SPORE_BURST_CLOUD_RADIUS,
+  SPORE_BURST_LOB_RANGE,
+  SUMMON_COUNT_PHASE_1,
+  SUMMON_SHAMBLER_COUNT_PHASE_2,
+  SUMMON_SPITTER_COUNT_PHASE_2,
+} from "../data/boss";
+import { SPITTER } from "../data/enemies";
+import { bossPhaseForHp, tickTelegraph } from "./boss";
 import { calculateDamage, rollCrit } from "./damage";
+import { initEnemyFromBand } from "./enemyFromBand";
 import { transition } from "./state";
 import { findNearestEnemy } from "./targeting";
 import type { Enemy, FrameInputs, GameState, Stats } from "./types";
@@ -90,10 +108,12 @@ export function step(
   inputs: FrameInputs,
   dt: number = FIXED_DT,
 ): GameState {
-  if (state.phase === "GameOver" || state.phase === "LevelUp") {
+  if (state.phase === "GameOver" || state.phase === "LevelUp" || state.phase === "Victory") {
     state.tick += 1;
     return state;
   }
+
+  let groundPoundLanded = false;
 
   const magnitude = Math.hypot(inputs.moveX, inputs.moveY);
   // Clamp to at most 1 rather than always normalizing, so a keyboard's
@@ -188,6 +208,87 @@ export function step(
         });
         ranged.cooldownRemaining = ranged.cooldownSeconds;
       }
+    }
+  });
+
+  if (state.boss) {
+    const boss = state.boss;
+    const wasPhase1 = boss.phase === 1;
+    boss.phase = bossPhaseForHp(boss.hp, boss.maxHp);
+    if (wasPhase1 && boss.phase === 2) {
+      boss.groundPound.cooldownSeconds = GROUND_POUND_COOLDOWN_PHASE_2;
+    }
+
+    const speed =
+      BLOATLORD_SPEED_PHASE_1 * (boss.phase === 2 ? BLOATLORD_SPEED_PHASE_2_MULTIPLIER : 1);
+    const bdx = state.bunny.x - boss.x;
+    const bdy = state.bunny.y - boss.y;
+    const bdistance = Math.hypot(bdx, bdy);
+    // Stands still mid wind-up (design spec §6: "avoided by spacing").
+    if (bdistance !== 0 && boss.groundPound.telegraphRemaining <= 0) {
+      boss.x += (bdx / bdistance) * speed * dt;
+      boss.y += (bdy / bdistance) * speed * dt;
+    }
+    const bossMinX = boss.radius;
+    const bossMaxX = LOGICAL_WIDTH - boss.radius;
+    if (boss.x > bossMaxX) boss.x = bossMaxX;
+    else if (boss.x < bossMinX) boss.x = bossMinX;
+    const bossMinY = boss.radius;
+    const bossMaxY = LOGICAL_HEIGHT - boss.radius;
+    if (boss.y > bossMaxY) boss.y = bossMaxY;
+    else if (boss.y < bossMinY) boss.y = bossMinY;
+
+    groundPoundLanded = tickTelegraph(boss.groundPound, dt);
+
+    if (tickTelegraph(boss.summon, dt)) {
+      const shamblerCount = boss.phase === 1 ? SUMMON_COUNT_PHASE_1 : SUMMON_SHAMBLER_COUNT_PHASE_2;
+      for (let i = 0; i < shamblerCount; i++) {
+        state.enemies.spawn((enemy) => {
+          const pos = pickSpawnPosition(state.rng);
+          enemy.x = pos.x;
+          enemy.y = pos.y;
+          enemy.radius = SHAMBLER_RADIUS;
+          enemy.hp = SHAMBLER_HP;
+          enemy.maxHp = SHAMBLER_HP;
+          enemy.speed = SHAMBLER_SPEED;
+          enemy.contactDamage = SHAMBLER_CONTACT_DAMAGE;
+          enemy.weakness = { against: "Plasma", multiplier: 1.3 };
+        });
+      }
+      if (boss.phase === 2) {
+        for (let i = 0; i < SUMMON_SPITTER_COUNT_PHASE_2; i++) {
+          const pos = pickSpawnPosition(state.rng);
+          state.enemies.spawn((enemy) => initEnemyFromBand(enemy, SPITTER, state.wave, pos.x, pos.y));
+        }
+      }
+    }
+
+    if (boss.phase === 2 && tickTelegraph(boss.sporeBurst, dt)) {
+      for (let i = 0; i < SPORE_BURST_CLOUD_COUNT; i++) {
+        const angle = state.rng.next() * Math.PI * 2;
+        const lobDistance = state.rng.next() * SPORE_BURST_LOB_RANGE;
+        state.sporeClouds.spawn((cloud) => {
+          cloud.x = state.bunny.x + Math.cos(angle) * lobDistance;
+          cloud.y = state.bunny.y + Math.sin(angle) * lobDistance;
+          cloud.radius = SPORE_BURST_CLOUD_RADIUS;
+          cloud.damagePerSecond = SPORE_BURST_CLOUD_DAMAGE_PER_SECOND;
+          cloud.secondsRemaining = SPORE_BURST_CLOUD_DURATION_SECONDS;
+        });
+      }
+    }
+  }
+
+  state.sporeClouds.forEachActive((cloud) => {
+    cloud.secondsRemaining -= dt;
+    if (cloud.secondsRemaining <= 0) {
+      state.sporeClouds.despawn(cloud);
+      return;
+    }
+    const cdx = state.bunny.x - cloud.x;
+    const cdy = state.bunny.y - cloud.y;
+    const touchRange = cloud.radius + state.bunny.radius;
+    if (cdx * cdx + cdy * cdy <= touchRange * touchRange) {
+      state.bunny.hp -= cloud.damagePerSecond * dt; // continuous, not iframe-gated
     }
   });
 
@@ -387,8 +488,31 @@ export function step(
     });
   }
 
+  if (state.boss && state.bunny.iframeSeconds <= 0) {
+    const boss = state.boss;
+    const dx = boss.x - state.bunny.x;
+    const dy = boss.y - state.bunny.y;
+    const touchRange = boss.radius + state.bunny.radius;
+    if (dx * dx + dy * dy <= touchRange * touchRange) {
+      state.bunny.hp -= boss.contactDamage;
+      state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
+    }
+  }
+
+  if (state.boss && groundPoundLanded && state.bunny.iframeSeconds <= 0) {
+    const boss = state.boss;
+    const dx = boss.x - state.bunny.x;
+    const dy = boss.y - state.bunny.y;
+    if (dx * dx + dy * dy <= GROUND_POUND_RADIUS * GROUND_POUND_RADIUS) {
+      state.bunny.hp -= GROUND_POUND_DAMAGE;
+      state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
+    }
+  }
+
   if (state.bunny.hp <= 0) {
     state.phase = transition(state.phase, "GameOver");
+  } else if (state.boss && state.boss.hp <= 0) {
+    state.phase = transition(state.phase, "Victory");
   }
 
   state.tick += 1;
