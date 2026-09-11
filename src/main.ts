@@ -4,7 +4,8 @@ import { createInputSampler } from "./game/input";
 import { FIXED_DT, LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./data/constants";
 import { createInitialState } from "./sim/types";
 import { step } from "./sim/step";
-import { createArenaView, createBunnyView } from "./systems/render";
+import { createArenaView, createBunnyView, createEnemyLayer } from "./systems/render";
+import { createHud } from "./ui/hud";
 
 const host = document.getElementById("app");
 if (!host) throw new Error("#app host element is missing");
@@ -32,9 +33,13 @@ host.appendChild(app.canvas);
 // when it fits, fractional below 1x — and letterboxed by the CSS grid.
 const stage = new Container();
 stage.addChild(createArenaView());
+const enemyLayer = createEnemyLayer();
+stage.addChild(enemyLayer.container);
 const bunnyView = createBunnyView();
 stage.addChild(bunnyView);
 app.stage.addChild(stage);
+
+const hud = createHud(document.body);
 
 function fit(): void {
   const raw = Math.min(
@@ -63,6 +68,8 @@ const loop = createLoop({
   sampleInputs: createInputSampler(),
   render: (s) => {
     bunnyView.position.set(s.bunny.x, s.bunny.y);
+    enemyLayer.sync(s.enemies);
+    hud.update(s.bunny.hp, s.bunny.maxHp, s.phase === "GameOver");
     readout.textContent = `seed 0x${(seed >>> 0).toString(16)} · tick ${s.tick}`;
   },
   fixedDtMs: FIXED_DT * 1000,

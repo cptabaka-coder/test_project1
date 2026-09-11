@@ -4,7 +4,10 @@ import {
   BUNNY_RADIUS,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
+  SHAMBLER_RADIUS,
 } from "../data/constants";
+import type { EntityStore } from "../sim/entityStore";
+import type { Enemy } from "../sim/types";
 
 /**
  * Builds the static scene for issue #1: the logical stage backdrop and the
@@ -41,4 +44,46 @@ export function createArenaView(): Container {
  */
 export function createBunnyView(): Graphics {
   return new Graphics().circle(0, 0, BUNNY_RADIUS).fill(0xe6e6f0);
+}
+
+export interface EnemyLayer {
+  container: Container;
+  /** Syncs child Graphics 1:1 with the store's active enemies, positioning
+   * each from `enemy.x/y`. Views are keyed by the enemy object's identity, so
+   * a pooled slot reuses its existing view across despawn/respawn. */
+  sync: (enemies: EntityStore<Enemy>) => void;
+}
+
+/**
+ * Placeholder shapes for enemies (issue #5); a texture swaps in later with no
+ * change to the simulation (ADR 0001 / 0002).
+ */
+export function createEnemyLayer(): EnemyLayer {
+  const container = new Container();
+  const views = new Map<Enemy, Graphics>();
+
+  return {
+    container,
+    sync(enemies: EntityStore<Enemy>): void {
+      const active = new Set<Enemy>();
+
+      enemies.forEachActive((enemy) => {
+        active.add(enemy);
+        let view = views.get(enemy);
+        if (!view) {
+          view = new Graphics().circle(0, 0, SHAMBLER_RADIUS).fill(0x8fbf5f);
+          views.set(enemy, view);
+          container.addChild(view);
+        }
+        view.position.set(enemy.x, enemy.y);
+      });
+
+      for (const [enemy, view] of views) {
+        if (active.has(enemy)) continue;
+        container.removeChild(view);
+        view.destroy();
+        views.delete(enemy);
+      }
+    },
+  };
 }
