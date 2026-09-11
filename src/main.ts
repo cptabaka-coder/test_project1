@@ -1,9 +1,10 @@
 import { Application, Container } from "pixi.js";
 import { createLoop } from "./game/loop";
+import { createInputSampler } from "./game/input";
 import { FIXED_DT, LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./data/constants";
-import { createInitialState, NO_INPUT } from "./sim/types";
+import { createInitialState } from "./sim/types";
 import { step } from "./sim/step";
-import { createArenaView } from "./systems/render";
+import { createArenaView, createBunnyView } from "./systems/render";
 
 const host = document.getElementById("app");
 if (!host) throw new Error("#app host element is missing");
@@ -31,6 +32,8 @@ host.appendChild(app.canvas);
 // when it fits, fractional below 1x — and letterboxed by the CSS grid.
 const stage = new Container();
 stage.addChild(createArenaView());
+const bunnyView = createBunnyView();
+stage.addChild(bunnyView);
 app.stage.addChild(stage);
 
 function fit(): void {
@@ -57,8 +60,9 @@ document.body.appendChild(readout);
 const loop = createLoop({
   state,
   step,
-  sampleInputs: () => NO_INPUT,
+  sampleInputs: createInputSampler(),
   render: (s) => {
+    bunnyView.position.set(s.bunny.x, s.bunny.y);
     readout.textContent = `seed 0x${(seed >>> 0).toString(16)} · tick ${s.tick}`;
   },
   fixedDtMs: FIXED_DT * 1000,

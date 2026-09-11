@@ -6,8 +6,10 @@ const MAX_STEPS_PER_FRAME = 5;
 
 export interface LoopOptions {
   state: GameState;
-  /** Advance the simulation one fixed step. */
-  step: (state: GameState, inputs: FrameInputs, dtMs: number) => void;
+  /** Advance the simulation one fixed step. `dt` is in seconds, matching
+   * `FIXED_DT` — the loop's own bookkeeping (`fixedDtMs`, `accumMs`) stays in
+   * milliseconds since it's measured against `performance.now()`. */
+  step: (state: GameState, inputs: FrameInputs, dt: number) => void;
   /** Sample player intent once per rendered frame. */
   sampleInputs: () => FrameInputs;
   /** Draw the world; `alpha` is the interpolation fraction into the next step. */
@@ -28,6 +30,7 @@ export interface Loop {
  */
 export function createLoop(opts: LoopOptions): Loop {
   const { state, step, sampleInputs, render, fixedDtMs } = opts;
+  const fixedDt = fixedDtMs / 1000;
 
   let running = false;
   let rafId = 0;
@@ -48,7 +51,7 @@ export function createLoop(opts: LoopOptions): Loop {
 
     const inputs = sampleInputs();
     for (let i = 0; i < steps; i++) {
-      step(state, inputs, fixedDtMs);
+      step(state, inputs, fixedDt);
     }
 
     render(state, alpha);

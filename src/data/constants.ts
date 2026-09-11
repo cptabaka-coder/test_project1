@@ -10,6 +10,12 @@ export const LOGICAL_HEIGHT = 720;
 /** Wall inset from the logical edge; enemies spawn just outside the Arena. */
 export const ARENA_MARGIN = 32;
 
+/** The bunny's move speed, 8-way (design spec §3). */
+export const BUNNY_MOVE_SPEED = 100;
+
+/** The bunny's small forgiving hitbox radius (design spec §3). */
+export const BUNNY_RADIUS = 10;
+
 /** Simulation runs at a fixed rate (ADR 0002). */
 export const FIXED_HZ = 60;
 export const FIXED_DT = 1 / FIXED_HZ;
