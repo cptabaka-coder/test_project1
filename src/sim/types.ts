@@ -1,4 +1,12 @@
-import { BUNNY_MAX_HP, BUNNY_RADIUS, CAP_ENEMIES, LOGICAL_HEIGHT, LOGICAL_WIDTH } from "../data/constants";
+import {
+  BUNNY_MAX_HP,
+  BUNNY_RADIUS,
+  CAP_ENEMIES,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
+  WEAPON_SLOT_COUNT,
+} from "../data/constants";
+import { KNIFE, type WeaponDef } from "../data/weapons";
 import { createEntityStore, type EntityStore } from "./entityStore";
 import { generateWaveBudget } from "./waveDirector";
 import { Rng } from "./rng";
@@ -12,6 +20,67 @@ export type RunPhase =
   | "GameOver"
   | "Victory";
 
+/**
+ * The bunny's named modifiers (design spec §4). Items and Level-Ups (issues
+ * #9-#11) adjust these; Weapons and the damage pipeline read them. All start
+ * at 0 — no bonus — until then.
+ */
+export interface Stats {
+  maxHp: number;
+  hpRegen: number;
+  lifestealPercent: number;
+  damagePercent: number;
+  meleeDamage: number;
+  energyDamage: number;
+  explosiveDamage: number;
+  attackSpeedPercent: number;
+  critChancePercent: number;
+  armor: number;
+  dodgePercent: number;
+  moveSpeedPercent: number;
+  pickupRange: number;
+  luck: number;
+  harvesting: number;
+}
+
+function createDefaultStats(): Stats {
+  return {
+    maxHp: 0,
+    hpRegen: 0,
+    lifestealPercent: 0,
+    damagePercent: 0,
+    meleeDamage: 0,
+    energyDamage: 0,
+    explosiveDamage: 0,
+    attackSpeedPercent: 0,
+    critChancePercent: 0,
+    armor: 0,
+    dodgePercent: 0,
+    moveSpeedPercent: 0,
+    pickupRange: 0,
+    luck: 0,
+    harvesting: 0,
+  };
+}
+
+/** One of the bunny's six carrying positions (design spec §5). Empty until a Weapon is bought. */
+export interface WeaponSlot {
+  weapon: WeaponDef | undefined;
+  level: number;
+  /** Seconds remaining until this Weapon can fire again. */
+  cooldownSeconds: number;
+}
+
+function createWeaponSlots(): WeaponSlot[] {
+  const slots: WeaponSlot[] = Array.from({ length: WEAPON_SLOT_COUNT }, () => ({
+    weapon: undefined,
+    level: 1,
+    cooldownSeconds: 0,
+  }));
+  slots[0] = { weapon: KNIFE, level: 1, cooldownSeconds: 0 }; // starting loadout (design spec §3)
+  return slots;
+}
+
 /** The player-controlled bunny (design spec §3). */
 export interface Bunny {
   x: number;
@@ -21,6 +90,8 @@ export interface Bunny {
   maxHp: number;
   /** Seconds of remaining post-hit invulnerability (design spec §3). */
   iframeSeconds: number;
+  stats: Stats;
+  weaponSlots: WeaponSlot[];
 }
 
 /** An undead-rabbit enemy (design spec §6). Only the Shambler exists so far. */
@@ -81,6 +152,8 @@ export function createInitialState(seed: number): GameState {
       hp: BUNNY_MAX_HP,
       maxHp: BUNNY_MAX_HP,
       iframeSeconds: 0,
+      stats: createDefaultStats(),
+      weaponSlots: createWeaponSlots(),
     },
     enemies: createEntityStore(CAP_ENEMIES, createEnemy, resetEnemy),
     waveSpawnSchedule: generateWaveBudget(1, rng),

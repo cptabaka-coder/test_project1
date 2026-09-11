@@ -41,3 +41,6 @@ export const WAVE_1_SHAMBLER_COUNT = 18;
 
 /** How far outside the wall an enemy first appears (design spec §7: "just outside the Arena"). */
 export const ENEMY_SPAWN_OFFSET = 16;
+
+/** The bunny's carrying positions for Weapons (design spec §5). */
+export const WEAPON_SLOT_COUNT = 6;

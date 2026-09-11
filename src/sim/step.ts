@@ -10,9 +10,24 @@ import {
   SHAMBLER_RADIUS,
   SHAMBLER_SPEED,
 } from "../data/constants";
+import type { WeaponFamily } from "../data/weapons";
+import { calculateDamage, rollCrit } from "./damage";
 import { transition } from "./state";
-import type { FrameInputs, GameState } from "./types";
+import { findNearestEnemy } from "./targeting";
+import type { FrameInputs, GameState, Stats } from "./types";
 import { drainDueSpawns, pickSpawnPosition } from "./waveDirector";
+import { meleeArcHits } from "./weapons";
+
+function familyStatFor(family: WeaponFamily, stats: Stats): number {
+  switch (family) {
+    case "Melee":
+      return stats.meleeDamage;
+    case "Laser":
+      return stats.energyDamage;
+    case "Plasma":
+      return stats.explosiveDamage;
+  }
+}
 
 /**
  * Advance the simulation by exactly one fixed step — the single seam the whole
@@ -73,6 +88,46 @@ export function step(
     enemy.x += (dx / distance) * enemy.speed * dt;
     enemy.y += (dy / distance) * enemy.speed * dt;
   });
+
+  for (const slot of state.bunny.weaponSlots) {
+    if (!slot.weapon) continue;
+
+    slot.cooldownSeconds = Math.max(0, slot.cooldownSeconds - dt);
+    if (slot.cooldownSeconds > 0) continue;
+
+    const target = findNearestEnemy(state.bunny.x, state.bunny.y, state.enemies);
+    if (!target) continue;
+
+    const levelStats = slot.weapon.levels[slot.level - 1]!;
+    const attacksPerSecond =
+      levelStats.attacksPerSecond * (1 + state.bunny.stats.attackSpeedPercent / 100);
+    slot.cooldownSeconds = 1 / attacksPerSecond;
+
+    const facingAngle = Math.atan2(target.y - state.bunny.y, target.x - state.bunny.x);
+    const hits = meleeArcHits(
+      state.bunny.x,
+      state.bunny.y,
+      facingAngle,
+      levelStats.range,
+      levelStats.arcDegrees ?? 360,
+      state.enemies,
+    );
+    const familyStat = familyStatFor(slot.weapon.family, state.bunny.stats);
+
+    for (const enemy of hits) {
+      const isCrit = rollCrit(state.bunny.stats.critChancePercent, state.rng);
+      const damage = calculateDamage({
+        baseDamage: levelStats.damage,
+        familyStat,
+        globalDamagePercent: state.bunny.stats.damagePercent,
+        isCrit,
+        targetArmor: 0,
+        weaknessMultiplier: 1,
+      });
+      enemy.hp -= damage;
+      if (enemy.hp <= 0) state.enemies.despawn(enemy);
+    }
+  }
 
   state.bunny.iframeSeconds = Math.max(0, state.bunny.iframeSeconds - dt);
 
