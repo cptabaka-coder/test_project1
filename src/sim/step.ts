@@ -250,6 +250,7 @@ export function step(
     const touchRange = state.bunny.radius + carrot.radius;
     if (distance <= touchRange) {
       state.bunny.carrots += carrot.value;
+      state.bunny.totalCarrotsEarned += carrot.value;
       state.pickups.despawn(carrot);
       return;
     }
@@ -261,7 +262,7 @@ export function step(
     }
   });
 
-  const newLevel = levelForCarrots(state.bunny.carrots);
+  const newLevel = levelForCarrots(state.bunny.totalCarrotsEarned);
   if (newLevel > state.bunny.level) {
     state.bunny.level = newLevel;
     state.pendingLevelUpOptions = rollLevelUpOptions(STAT_GAIN_POOL, state.rng, 3);

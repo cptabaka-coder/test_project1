@@ -33,6 +33,9 @@ export interface WeaponDef {
   family: WeaponFamily;
   deliveryMode: DeliveryMode;
   levels: WeaponLevelStats[];
+  /** Level I Shop price in Carrots. Not given in the design doc (only Item
+   * prices are, §10) — a reasonable placeholder pending real balance. */
+  basePrice: number;
 }
 
 export const KNIFE: WeaponDef = {
@@ -40,6 +43,7 @@ export const KNIFE: WeaponDef = {
   family: "Melee",
   deliveryMode: "melee-arc",
   levels: [{ damage: 6, attacksPerSecond: 2.0, range: 60, arcDegrees: 60 }],
+  basePrice: 10,
 };
 
 export const WOODEN_STAKE: WeaponDef = {
@@ -47,6 +51,7 @@ export const WOODEN_STAKE: WeaponDef = {
   family: "Melee",
   deliveryMode: "melee-single",
   levels: [{ damage: 14, attacksPerSecond: 0.9, range: 45 }],
+  basePrice: 14,
 };
 
 export const LASER_PISTOL: WeaponDef = {
@@ -54,6 +59,7 @@ export const LASER_PISTOL: WeaponDef = {
   family: "Laser",
   deliveryMode: "hitscan",
   levels: [{ damage: 3, attacksPerSecond: 4.0, range: 2000, pierceCount: 2 }],
+  basePrice: 16,
 };
 
 export const PLASMA_CANNON: WeaponDef = {
@@ -70,4 +76,8 @@ export const PLASMA_CANNON: WeaponDef = {
       splashDamage: 12,
     },
   ],
+  basePrice: 20,
 };
+
+/** Every Weapon the Shop can offer (design spec §9). */
+export const ALL_WEAPONS: WeaponDef[] = [KNIFE, WOODEN_STAKE, LASER_PISTOL, PLASMA_CANNON];

@@ -6,6 +6,7 @@ import {
   CAP_PROJECTILES,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
+  SHOP_OFFER_COUNT,
   WEAPON_SLOT_COUNT,
 } from "../data/constants";
 import type { WeaknessDef } from "../data/enemies";
@@ -73,6 +74,9 @@ export interface WeaponSlot {
   level: number;
   /** Seconds remaining until this Weapon can fire again. */
   cooldownSeconds: number;
+  /** What was paid for the Weapon at its current Level — the Sell-back base
+   * (design spec §9). 0 for the un-bought starting Knife. */
+  purchasePrice: number;
 }
 
 function createWeaponSlots(): WeaponSlot[] {
@@ -80,9 +84,17 @@ function createWeaponSlots(): WeaponSlot[] {
     weapon: undefined,
     level: 1,
     cooldownSeconds: 0,
+    purchasePrice: 0,
   }));
-  slots[0] = { weapon: KNIFE, level: 1, cooldownSeconds: 0 }; // starting loadout (design spec §3)
+  slots[0] = { weapon: KNIFE, level: 1, cooldownSeconds: 0, purchasePrice: 0 }; // starting loadout (design spec §3)
   return slots;
+}
+
+/** A Shop offer slot (design spec §9). Items mix in once issue #11 lands. */
+export interface ShopOffer {
+  weapon: WeaponDef;
+  level: number;
+  price: number;
 }
 
 /** The player-controlled bunny (design spec §3). */
@@ -96,9 +108,12 @@ export interface Bunny {
   iframeSeconds: number;
   stats: Stats;
   weaponSlots: WeaponSlot[];
-  /** Total Carrots ever collected (design spec §8): doubles as XP and stays
-   * fully spendable — collecting never subtracts from it. */
+  /** Spendable Carrot balance (design spec §8-9): rises on collection, falls
+   * when the Shop is used. */
   carrots: number;
+  /** Total Carrots ever collected — the Level's XP (design spec §8). Never
+   * decreases, so spending never "un-levels" the bunny. */
+  totalCarrotsEarned: number;
   level: number;
 }
 
@@ -279,12 +294,20 @@ export interface GameState {
   enemies: EntityStore<Enemy>;
   projectiles: EntityStore<Projectile>;
   pickups: EntityStore<Carrot>;
+  /** The current Wave number (design spec §7). Only Wave 1 is reachable so far (issue #7). */
+  wave: number;
   /** Remaining Wave-1 spawn timestamps, seconds from Wave start (design spec §7). */
   waveSpawnSchedule: number[];
   /** Seconds elapsed in the current Wave. */
   waveElapsedSeconds: number;
   /** The rolled 1-of-3 choices while `phase === "LevelUp"`; empty otherwise. */
   pendingLevelUpOptions: StatGainOption[];
+  /** The Shop's 4 offer slots (design spec §9); undefined = empty slot. */
+  shopOffers: (ShopOffer | undefined)[];
+  /** Parallel to `shopOffers`: true keeps that slot through the next Reroll. */
+  shopLocked: boolean[];
+  /** Rerolls used since the Shop last reset for a Wave. */
+  shopRerollUses: number;
 }
 
 /** Per-frame player intent, sampled by the loop and handed to `step`. */
@@ -310,14 +333,19 @@ export function createInitialState(seed: number): GameState {
       stats: createDefaultStats(),
       weaponSlots: createWeaponSlots(),
       carrots: 0,
+      totalCarrotsEarned: 0,
       level: 1,
     },
     enemies: createEntityStore(CAP_ENEMIES, createEnemy, resetEnemy),
     projectiles: createEntityStore(CAP_PROJECTILES, createProjectile, resetProjectile),
     pickups: createEntityStore(CAP_PICKUPS, createCarrot, resetCarrot),
+    wave: 1,
     waveSpawnSchedule: generateWaveBudget(1, rng),
     waveElapsedSeconds: 0,
     pendingLevelUpOptions: [],
+    shopOffers: Array.from({ length: SHOP_OFFER_COUNT }, () => undefined),
+    shopLocked: Array.from({ length: SHOP_OFFER_COUNT }, () => false),
+    shopRerollUses: 0,
   };
 }
 
