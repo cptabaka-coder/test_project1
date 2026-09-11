@@ -5,9 +5,17 @@ import {
   LOGICAL_WIDTH,
   WAVE_1_DURATION_S,
   WAVE_1_SHAMBLER_COUNT,
+  WAVE_DURATIONS_S,
+  WAVE_TOTAL_COUNTS,
 } from "../../src/data/constants";
+import { FLEDGLING, SHAMBLER, SPITTER, STALKER } from "../../src/data/enemies";
 import { Rng } from "../../src/sim/rng";
-import { drainDueSpawns, generateWaveBudget, pickSpawnPosition } from "../../src/sim/waveDirector";
+import {
+  drainDueSpawns,
+  generateWaveBudget,
+  pickSpawnPosition,
+  pickWaveEnemyBand,
+} from "../../src/sim/waveDirector";
 
 describe("generateWaveBudget", () => {
   it("produces the expected Shambler count for Wave 1", () => {
@@ -33,6 +41,19 @@ describe("generateWaveBudget", () => {
 
     expect(a).toEqual(b);
     expect(a).not.toEqual(c);
+  });
+
+  it("produces the expected count and stays within duration for Waves 2-4", () => {
+    for (const wave of [2, 3, 4]) {
+      const schedule = generateWaveBudget(wave, new Rng(1));
+
+      expect(schedule).toHaveLength(WAVE_TOTAL_COUNTS[wave]!);
+      expect(schedule.at(-1)!).toBeLessThan(WAVE_DURATIONS_S[wave]!);
+    }
+  });
+
+  it("produces an empty schedule for Wave 5 — the Boss fight has no timed budget", () => {
+    expect(generateWaveBudget(5, new Rng(1))).toEqual([]);
   });
 });
 
@@ -72,6 +93,32 @@ describe("drainDueSpawns", () => {
 
     expect(secondAttempts).toBe(1);
     expect(schedule).toEqual([]);
+  });
+});
+
+describe("pickWaveEnemyBand", () => {
+  it("only ever picks Shambler at Wave 1 (no other Band is eligible yet)", () => {
+    const rng = new Rng(1);
+    for (let i = 0; i < 20; i++) {
+      expect(pickWaveEnemyBand(1, rng)).toBe(SHAMBLER);
+    }
+  });
+
+  it("picks only Bands eligible for the given Wave", () => {
+    const rng = new Rng(1);
+    for (let i = 0; i < 50; i++) {
+      const band = pickWaveEnemyBand(4, rng);
+      expect(band.bandStart).toBeLessThanOrEqual(4);
+      expect(band.bandEnd).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("can pick every Band eligible for Wave 4 across enough rolls", () => {
+    const rng = new Rng(1);
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) seen.add(pickWaveEnemyBand(4, rng).id);
+
+    expect(seen).toEqual(new Set([SHAMBLER.id, SPITTER.id, FLEDGLING.id, STALKER.id]));
   });
 });
 

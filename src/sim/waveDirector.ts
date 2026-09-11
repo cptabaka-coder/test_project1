@@ -3,9 +3,10 @@ import {
   ENEMY_SPAWN_OFFSET,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
-  WAVE_1_DURATION_S,
-  WAVE_1_SHAMBLER_COUNT,
+  WAVE_DURATIONS_S,
+  WAVE_TOTAL_COUNTS,
 } from "../data/constants";
+import { ALL_BANDS, type EnemyBandDef } from "../data/enemies";
 import type { Rng } from "./rng";
 
 /** Each spawn's jitter is at most this fraction of the even interval, so the
@@ -15,19 +16,32 @@ const JITTER_FRACTION = 0.15;
 /**
  * Generates a Wave's spawn schedule: seconds-from-wave-start timestamps, one
  * per enemy, sorted ascending (design spec §7). Continuous pacing: an even
- * base interval nudged by seeded jitter per spawn. Only Wave 1 has real
- * content so far — later waves land with the enemy types that fill them.
+ * base interval nudged by seeded jitter per spawn. Wave 5 is the Boss fight
+ * — "no timer" (design spec §7) — so it has no timed budget of its own; its
+ * light add trickle comes from the Boss's own Summon attack (issue #12).
  */
 export function generateWaveBudget(wave: number, rng: Rng): number[] {
-  if (wave !== 1) throw new Error(`no wave budget defined for wave ${wave}`);
+  if (wave === 5) return [];
 
-  const interval = WAVE_1_DURATION_S / WAVE_1_SHAMBLER_COUNT;
+  const duration = WAVE_DURATIONS_S[wave];
+  const count = WAVE_TOTAL_COUNTS[wave];
+  if (duration === undefined || count === undefined) {
+    throw new Error(`no wave budget defined for wave ${wave}`);
+  }
+
+  const interval = duration / count;
   const maxJitter = interval * JITTER_FRACTION;
 
-  return Array.from({ length: WAVE_1_SHAMBLER_COUNT }, (_, i) => {
+  return Array.from({ length: count }, (_, i) => {
     const jitter = (rng.next() * 2 - 1) * maxJitter;
     return i * interval + jitter;
   });
+}
+
+/** Picks a random Band eligible for `wave` from the full roster (design spec §6). */
+export function pickWaveEnemyBand(wave: number, rng: Rng): EnemyBandDef {
+  const eligible = ALL_BANDS.filter((band) => wave >= band.bandStart && wave <= band.bandEnd);
+  return eligible[rng.int(eligible.length)]!;
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   SHAMBLER_HP,
   SHAMBLER_RADIUS,
   SHAMBLER_SPEED,
+  WAVE_DURATIONS_S,
 } from "../data/constants";
 import type { WeaponDef, WeaponFamily } from "../data/weapons";
 import {
@@ -40,11 +41,13 @@ import { initEnemyFromBand } from "./enemyFromBand";
 import { transition } from "./state";
 import { findNearestEnemy } from "./targeting";
 import type { Enemy, FrameInputs, GameState, Stats } from "./types";
-import { drainDueSpawns, pickSpawnPosition } from "./waveDirector";
+import { drainDueSpawns, pickSpawnPosition, pickWaveEnemyBand } from "./waveDirector";
 import { STAT_GAIN_POOL } from "../data/levelUpPool";
 import { levelForCarrots } from "./leveling";
 import { rollLevelUpOptions } from "./levelUpRoll";
+import { resetShopForWave } from "./shop";
 import { splashFalloff } from "./splash";
+import { waveEndPayout } from "./waveEndPayout";
 import { resolveWeaknessMultiplier } from "./weakness";
 import { hitscanLineHits, meleeArcHits } from "./weapons";
 
@@ -62,6 +65,7 @@ function familyStatFor(family: WeaponFamily, stats: Stats): number {
 /** Despawns a dead enemy and drops its Carrot (design spec §8: 1 normal / 3 Elite). */
 function killEnemy(state: GameState, enemy: Enemy): void {
   state.enemies.despawn(enemy);
+  state.totalKills += 1;
   state.pickups.spawn((carrot) => {
     carrot.x = enemy.x;
     carrot.y = enemy.y;
@@ -108,7 +112,12 @@ export function step(
   inputs: FrameInputs,
   dt: number = FIXED_DT,
 ): GameState {
-  if (state.phase === "GameOver" || state.phase === "LevelUp" || state.phase === "Victory") {
+  if (
+    state.phase === "GameOver" ||
+    state.phase === "LevelUp" ||
+    state.phase === "Victory" ||
+    state.phase === "Shop"
+  ) {
     state.tick += 1;
     return state;
   }
@@ -138,17 +147,36 @@ export function step(
   drainDueSpawns(state.waveSpawnSchedule, state.waveElapsedSeconds, () => {
     const spawned = state.enemies.spawn((enemy) => {
       const pos = pickSpawnPosition(state.rng);
-      enemy.x = pos.x;
-      enemy.y = pos.y;
-      enemy.radius = SHAMBLER_RADIUS;
-      enemy.hp = SHAMBLER_HP;
-      enemy.maxHp = SHAMBLER_HP;
-      enemy.speed = SHAMBLER_SPEED;
-      enemy.contactDamage = SHAMBLER_CONTACT_DAMAGE;
-      enemy.weakness = { against: "Plasma", multiplier: 1.3 }; // design spec §6
+      if (state.wave === 1) {
+        enemy.x = pos.x;
+        enemy.y = pos.y;
+        enemy.radius = SHAMBLER_RADIUS;
+        enemy.hp = SHAMBLER_HP;
+        enemy.maxHp = SHAMBLER_HP;
+        enemy.speed = SHAMBLER_SPEED;
+        enemy.contactDamage = SHAMBLER_CONTACT_DAMAGE;
+        enemy.weakness = { against: "Plasma", multiplier: 1.3 }; // design spec §6
+      } else {
+        const band = pickWaveEnemyBand(state.wave, state.rng);
+        initEnemyFromBand(enemy, band, state.wave, pos.x, pos.y);
+      }
     });
     return spawned !== undefined;
   });
+
+  const waveDuration = WAVE_DURATIONS_S[state.wave];
+  if (waveDuration !== undefined && state.waveElapsedSeconds >= waveDuration) {
+    // "when the timer expires the survivors are cleared and the Shop opens" (CONTEXT.md: Wave).
+    const survivors: Enemy[] = [];
+    state.enemies.forEachActive((e) => survivors.push(e));
+    for (const e of survivors) state.enemies.despawn(e);
+
+    state.bunny.carrots += waveEndPayout(state.wave, state.bunny.stats.harvesting);
+    resetShopForWave(state);
+    state.phase = transition(state.phase, "Shop");
+    state.tick += 1;
+    return state;
+  }
 
   state.enemies.forEachActive((enemy) => {
     const dx = state.bunny.x - enemy.x;
@@ -512,6 +540,7 @@ export function step(
   if (state.bunny.hp <= 0) {
     state.phase = transition(state.phase, "GameOver");
   } else if (state.boss && state.boss.hp <= 0) {
+    state.totalKills += 1;
     state.phase = transition(state.phase, "Victory");
   }
 

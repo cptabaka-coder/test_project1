@@ -385,10 +385,12 @@ export interface GameState {
   shopLocked: boolean[];
   /** Rerolls used since the Shop last reset for a Wave. */
   shopRerollUses: number;
-  /** The Bloatlord (design spec §6, Wave 5); undefined until spawned. Not
-   * reachable through actual play yet — Wave 5 isn't wired (issue #12). */
+  /** The Bloatlord (design spec §6, Wave 5); undefined until Wave 5 begins. */
   boss: Boss | undefined;
   sporeClouds: EntityStore<SporeCloud>;
+  /** Total enemies (and the Boss) killed this Run — part of the GameOver/
+   * Victory summary (design spec §2, issue #13). */
+  totalKills: number;
 }
 
 /** Per-frame player intent, sampled by the loop and handed to `step`. */
@@ -430,6 +432,7 @@ export function createInitialState(seed: number): GameState {
     shopRerollUses: 0,
     boss: undefined,
     sporeClouds: createEntityStore(CAP_SPORE_CLOUDS, createSporeCloud, resetSporeCloud),
+    totalKills: 0,
   };
 }
 

@@ -39,6 +39,21 @@ export const SHAMBLER_RADIUS = 10;
 export const WAVE_1_DURATION_S = 20;
 export const WAVE_1_SHAMBLER_COUNT = 18;
 
+/** Waves 2-4's duration and total enemy count (design spec §7). Wave 5 has
+ * no timer/budget of its own — it's the Boss fight (issue #12). */
+export const WAVE_DURATIONS_S: Record<number, number> = {
+  1: WAVE_1_DURATION_S,
+  2: 24,
+  3: 28,
+  4: 32,
+};
+export const WAVE_TOTAL_COUNTS: Record<number, number> = {
+  1: WAVE_1_SHAMBLER_COUNT,
+  2: 28,
+  3: 36,
+  4: 48,
+};
+
 /** How far outside the wall an enemy first appears (design spec §7: "just outside the Arena"). */
 export const ENEMY_SPAWN_OFFSET = 16;
 

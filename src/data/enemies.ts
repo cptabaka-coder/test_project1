@@ -45,6 +45,20 @@ export interface EnemyBandDef {
   dash?: DashDef;
 }
 
+export const SHAMBLER: EnemyBandDef = {
+  id: "shambler",
+  archetype: "Zombie",
+  bandStart: 1,
+  bandEnd: 5,
+  hp: 10,
+  speed: 45,
+  contactDamage: 3,
+  radius: 10,
+  flies: false,
+  lifestealPercent: 0,
+  weakness: { against: "Plasma", multiplier: 1.3 },
+};
+
 export const SPITTER: EnemyBandDef = {
   id: "spitter",
   archetype: "Zombie",
@@ -89,3 +103,6 @@ export const STALKER: EnemyBandDef = {
   weakness: { against: "stake", multiplier: 2 },
   ranged: { damage: 5, projectileSpeed: 220, range: 240, cooldownSeconds: 1.8 },
 };
+
+/** The full slice roster (design spec §6). */
+export const ALL_BANDS: EnemyBandDef[] = [SHAMBLER, SPITTER, FLEDGLING, STALKER];
