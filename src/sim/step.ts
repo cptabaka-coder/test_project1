@@ -1,104 +1,32 @@
 import {
   ARENA_MARGIN,
-  BASE_PICKUP_RANGE,
-  BUNNY_IFRAME_SECONDS,
   BUNNY_MOVE_SPEED,
-  CARROT_FLY_SPEED,
-  CARROT_RADIUS,
-  CARROT_VALUE_ELITE,
-  CARROT_VALUE_NORMAL,
   FIXED_DT,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
-  PROJECTILE_RADIUS,
-  PROJECTILE_TTL_SECONDS,
   SHAMBLER_CONTACT_DAMAGE,
   SHAMBLER_HP,
   SHAMBLER_RADIUS,
   SHAMBLER_SPEED,
   WAVE_DURATIONS_S,
 } from "../data/constants";
-import type { WeaponDef, WeaponFamily } from "../data/weapons";
-import {
-  BLOATLORD_SPEED_PHASE_1,
-  BLOATLORD_SPEED_PHASE_2_MULTIPLIER,
-  GROUND_POUND_COOLDOWN_PHASE_2,
-  GROUND_POUND_DAMAGE,
-  GROUND_POUND_RADIUS,
-  SPORE_BURST_CLOUD_COUNT,
-  SPORE_BURST_CLOUD_DAMAGE_PER_SECOND,
-  SPORE_BURST_CLOUD_DURATION_SECONDS,
-  SPORE_BURST_CLOUD_RADIUS,
-  SPORE_BURST_LOB_RANGE,
-  SUMMON_COUNT_PHASE_1,
-  SUMMON_SHAMBLER_COUNT_PHASE_2,
-  SUMMON_SPITTER_COUNT_PHASE_2,
-} from "../data/boss";
-import { SPITTER } from "../data/enemies";
-import { bossPhaseForHp, tickTelegraph } from "./boss";
-import { calculateDamage, rollCrit } from "./damage";
+import { GROUND_POUND_DAMAGE, GROUND_POUND_RADIUS } from "../data/boss";
+import { tickBoss } from "./boss";
+import { resolveBunnyDamage } from "./bunnyDamage";
 import { initEnemyFromBand } from "./enemyFromBand";
+import { tickEnemies } from "./enemyTick";
+import { tickHazards } from "./hazardTick";
+import { tickPickups } from "./pickupTick";
+import { tickProjectiles } from "./projectileTick";
 import { transition } from "./state";
-import { findNearestEnemy } from "./targeting";
-import type { Enemy, FrameInputs, GameState, Stats } from "./types";
+import type { Enemy, FrameInputs, GameState } from "./types";
 import { drainDueSpawns, pickSpawnPosition, pickWaveEnemyBand } from "./waveDirector";
 import { STAT_GAIN_POOL } from "../data/levelUpPool";
 import { levelForCarrots } from "./leveling";
 import { rollLevelUpOptions } from "./levelUpRoll";
 import { resetShopForWave } from "./shop";
-import { splashFalloff } from "./splash";
 import { waveEndPayout } from "./waveEndPayout";
-import { resolveWeaknessMultiplier } from "./weakness";
-import { hitscanLineHits, meleeArcHits } from "./weapons";
-
-function familyStatFor(family: WeaponFamily, stats: Stats): number {
-  switch (family) {
-    case "Melee":
-      return stats.meleeDamage;
-    case "Laser":
-      return stats.energyDamage;
-    case "Plasma":
-      return stats.explosiveDamage;
-  }
-}
-
-/** Despawns a dead enemy and drops its Carrot (design spec §8: 1 normal / 3 Elite). */
-function killEnemy(state: GameState, enemy: Enemy): void {
-  state.enemies.despawn(enemy);
-  state.totalKills += 1;
-  // Pickups vacuum the oldest at capacity rather than queue/drop (design spec §2).
-  state.pickups.spawnVacuumingOldest((carrot) => {
-    carrot.x = enemy.x;
-    carrot.y = enemy.y;
-    carrot.radius = CARROT_RADIUS;
-    carrot.value = enemy.isElite ? CARROT_VALUE_ELITE : CARROT_VALUE_NORMAL;
-  });
-}
-
-/** Applies one weapon's hit-list, running each enemy through the full damage
- * pipeline (design spec §3-4: Family stat -> global Damage% -> Crit -> Armor/Weakness). */
-function applyWeaponHits(
-  hits: Enemy[],
-  baseDamage: number,
-  weapon: WeaponDef,
-  state: GameState,
-): void {
-  const familyStat = familyStatFor(weapon.family, state.bunny.stats);
-  for (const enemy of hits) {
-    const isCrit = rollCrit(state.bunny.stats.critChancePercent, state.rng);
-    const weaknessMultiplier = resolveWeaknessMultiplier(enemy.weakness, weapon.family, weapon.id);
-    const damage = calculateDamage({
-      baseDamage,
-      familyStat,
-      globalDamagePercent: state.bunny.stats.damagePercent,
-      isCrit,
-      targetArmor: 0,
-      weaknessMultiplier,
-    });
-    enemy.hp -= damage;
-    if (enemy.hp <= 0) killEnemy(state, enemy);
-  }
-}
+import { tickWeaponFiring } from "./weaponFiring";
 
 /**
  * Advance the simulation by exactly one fixed step — the single seam the whole
@@ -179,218 +107,29 @@ export function step(
     return state;
   }
 
-  state.enemies.forEachActive((enemy) => {
-    const dx = state.bunny.x - enemy.x;
-    const dy = state.bunny.y - enemy.y;
-    const distance = Math.hypot(dx, dy);
-    const ranged = enemy.ranged;
-    // A ranged enemy holds its distance once in range instead of closing to melee.
-    const holding = ranged !== undefined && distance <= ranged.range;
-
-    const dash = enemy.dash;
-    if (dash) {
-      if (dash.activeSecondsRemaining > 0) {
-        dash.activeSecondsRemaining = Math.max(0, dash.activeSecondsRemaining - dt);
-      } else {
-        dash.cooldownRemaining = Math.max(0, dash.cooldownRemaining - dt);
-        if (dash.cooldownRemaining <= 0) {
-          dash.activeSecondsRemaining = dash.durationSeconds;
-          dash.cooldownRemaining = dash.cooldownSeconds;
-        }
-      }
-    }
-    const effectiveSpeed =
-      dash && dash.activeSecondsRemaining > 0 ? enemy.speed * dash.speedMultiplier : enemy.speed;
-
-    if (distance !== 0 && !holding) {
-      enemy.x += (dx / distance) * effectiveSpeed * dt;
-      enemy.y += (dy / distance) * effectiveSpeed * dt;
-    }
-
-    // Flying enemies ignore the stage's edge entirely (design spec §6);
-    // grounded enemies can't be pushed past it.
-    if (!enemy.flies) {
-      const enemyMinX = enemy.radius;
-      const enemyMaxX = LOGICAL_WIDTH - enemy.radius;
-      if (enemy.x > enemyMaxX) enemy.x = enemyMaxX;
-      else if (enemy.x < enemyMinX) enemy.x = enemyMinX;
-
-      const enemyMinY = enemy.radius;
-      const enemyMaxY = LOGICAL_HEIGHT - enemy.radius;
-      if (enemy.y > enemyMaxY) enemy.y = enemyMaxY;
-      else if (enemy.y < enemyMinY) enemy.y = enemyMinY;
-    }
-
-    if (ranged) {
-      ranged.cooldownRemaining = Math.max(0, ranged.cooldownRemaining - dt);
-      if (holding && ranged.cooldownRemaining <= 0 && distance !== 0) {
-        state.projectiles.spawn((p) => {
-          p.x = enemy.x;
-          p.y = enemy.y;
-          p.vx = (dx / distance) * ranged.projectileSpeed;
-          p.vy = (dy / distance) * ranged.projectileSpeed;
-          p.radius = PROJECTILE_RADIUS;
-          p.damage = ranged.damage;
-          p.ttlSeconds = PROJECTILE_TTL_SECONDS;
-          p.lifestealPercent = enemy.lifestealPercent;
-          p.owner = enemy;
-        });
-        ranged.cooldownRemaining = ranged.cooldownSeconds;
-      }
-    }
-  });
+  tickEnemies(state.bunny, state.enemies, state.projectiles, dt);
 
   if (state.boss) {
-    const boss = state.boss;
-    const wasPhase1 = boss.phase === 1;
-    boss.phase = bossPhaseForHp(boss.hp, boss.maxHp);
-    if (wasPhase1 && boss.phase === 2) {
-      boss.groundPound.cooldownSeconds = GROUND_POUND_COOLDOWN_PHASE_2;
-    }
-
-    const speed =
-      BLOATLORD_SPEED_PHASE_1 * (boss.phase === 2 ? BLOATLORD_SPEED_PHASE_2_MULTIPLIER : 1);
-    const bdx = state.bunny.x - boss.x;
-    const bdy = state.bunny.y - boss.y;
-    const bdistance = Math.hypot(bdx, bdy);
-    // Stands still mid wind-up (design spec §6: "avoided by spacing").
-    if (bdistance !== 0 && boss.groundPound.telegraphRemaining <= 0) {
-      boss.x += (bdx / bdistance) * speed * dt;
-      boss.y += (bdy / bdistance) * speed * dt;
-    }
-    const bossMinX = boss.radius;
-    const bossMaxX = LOGICAL_WIDTH - boss.radius;
-    if (boss.x > bossMaxX) boss.x = bossMaxX;
-    else if (boss.x < bossMinX) boss.x = bossMinX;
-    const bossMinY = boss.radius;
-    const bossMaxY = LOGICAL_HEIGHT - boss.radius;
-    if (boss.y > bossMaxY) boss.y = bossMaxY;
-    else if (boss.y < bossMinY) boss.y = bossMinY;
-
-    groundPoundLanded = tickTelegraph(boss.groundPound, dt);
-
-    if (tickTelegraph(boss.summon, dt)) {
-      const shamblerCount = boss.phase === 1 ? SUMMON_COUNT_PHASE_1 : SUMMON_SHAMBLER_COUNT_PHASE_2;
-      for (let i = 0; i < shamblerCount; i++) {
-        state.enemies.spawn((enemy) => {
-          const pos = pickSpawnPosition(state.rng);
-          enemy.x = pos.x;
-          enemy.y = pos.y;
-          enemy.radius = SHAMBLER_RADIUS;
-          enemy.hp = SHAMBLER_HP;
-          enemy.maxHp = SHAMBLER_HP;
-          enemy.speed = SHAMBLER_SPEED;
-          enemy.contactDamage = SHAMBLER_CONTACT_DAMAGE;
-          enemy.weakness = { against: "Plasma", multiplier: 1.3 };
-        });
-      }
-      if (boss.phase === 2) {
-        for (let i = 0; i < SUMMON_SPITTER_COUNT_PHASE_2; i++) {
-          const pos = pickSpawnPosition(state.rng);
-          state.enemies.spawn((enemy) => initEnemyFromBand(enemy, SPITTER, state.wave, pos.x, pos.y));
-        }
-      }
-    }
-
-    if (boss.phase === 2 && tickTelegraph(boss.sporeBurst, dt)) {
-      for (let i = 0; i < SPORE_BURST_CLOUD_COUNT; i++) {
-        const angle = state.rng.next() * Math.PI * 2;
-        const lobDistance = state.rng.next() * SPORE_BURST_LOB_RANGE;
-        state.sporeClouds.spawn((cloud) => {
-          cloud.x = state.bunny.x + Math.cos(angle) * lobDistance;
-          cloud.y = state.bunny.y + Math.sin(angle) * lobDistance;
-          cloud.radius = SPORE_BURST_CLOUD_RADIUS;
-          cloud.damagePerSecond = SPORE_BURST_CLOUD_DAMAGE_PER_SECOND;
-          cloud.secondsRemaining = SPORE_BURST_CLOUD_DURATION_SECONDS;
-        });
-      }
-    }
+    groundPoundLanded = tickBoss(
+      state.boss,
+      state.bunny,
+      state.enemies,
+      state.sporeClouds,
+      state.wave,
+      state.rng,
+      dt,
+    );
   }
 
-  state.sporeClouds.forEachActive((cloud) => {
-    cloud.secondsRemaining -= dt;
-    if (cloud.secondsRemaining <= 0) {
-      state.sporeClouds.despawn(cloud);
-      return;
-    }
-    const cdx = state.bunny.x - cloud.x;
-    const cdy = state.bunny.y - cloud.y;
-    const touchRange = cloud.radius + state.bunny.radius;
-    if (cdx * cdx + cdy * cdy <= touchRange * touchRange) {
-      state.bunny.hp -= cloud.damagePerSecond * dt; // continuous, not iframe-gated
-    }
-  });
+  tickHazards(state.bunny, state.sporeClouds, dt);
 
-  state.projectiles.forEachActive((p) => {
-    // Never overshoot past a lobbed shot's landing point in one big-dt tick.
-    const moveDt = Math.min(dt, Math.max(0, p.ttlSeconds));
-    p.x += p.vx * moveDt;
-    p.y += p.vy * moveDt;
-    p.ttlSeconds -= dt;
-    if (p.ttlSeconds > 0) return;
+  state.totalKills += tickProjectiles(
+    { bunny: state.bunny, enemies: state.enemies, pickups: state.pickups, rng: state.rng },
+    state.projectiles,
+    dt,
+  );
 
-    const aoe = p.aoe;
-    if (aoe) {
-      let closest: Enemy | undefined;
-      let closestDistance = Infinity;
-      const victims: { enemy: Enemy; distance: number }[] = [];
-
-      state.enemies.forEachActive((enemy) => {
-        const ddx = enemy.x - p.x;
-        const ddy = enemy.y - p.y;
-        const distance = Math.hypot(ddx, ddy);
-        if (distance > aoe.splashRadius) return;
-        victims.push({ enemy, distance });
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          closest = enemy;
-        }
-      });
-
-      for (const { enemy, distance } of victims) {
-        const isCrit = rollCrit(state.bunny.stats.critChancePercent, state.rng);
-        const weaknessMultiplier = resolveWeaknessMultiplier(
-          enemy.weakness,
-          aoe.weaponFamily,
-          aoe.weaponId,
-        );
-        const splashPortion = aoe.splashDamage * splashFalloff(distance, aoe.splashRadius);
-        const directBonus = enemy === closest ? p.damage : 0;
-        const damage = calculateDamage({
-          baseDamage: splashPortion + directBonus,
-          familyStat: aoe.familyStat,
-          globalDamagePercent: aoe.globalDamagePercent,
-          isCrit,
-          targetArmor: 0,
-          weaknessMultiplier,
-        });
-        enemy.hp -= damage;
-        if (enemy.hp <= 0) killEnemy(state, enemy);
-      }
-    }
-
-    state.projectiles.despawn(p);
-  });
-
-  state.pickups.forEachActive((carrot) => {
-    const dx = state.bunny.x - carrot.x;
-    const dy = state.bunny.y - carrot.y;
-    const distance = Math.hypot(dx, dy);
-
-    const touchRange = state.bunny.radius + carrot.radius;
-    if (distance <= touchRange) {
-      state.bunny.carrots += carrot.value;
-      state.bunny.totalCarrotsEarned += carrot.value;
-      state.pickups.despawn(carrot);
-      return;
-    }
-
-    const pickupRange = BASE_PICKUP_RANGE + state.bunny.stats.pickupRange;
-    if (distance <= pickupRange) {
-      carrot.x += (dx / distance) * CARROT_FLY_SPEED * dt;
-      carrot.y += (dy / distance) * CARROT_FLY_SPEED * dt;
-    }
-  });
+  tickPickups(state.bunny, state.pickups, dt);
 
   const newLevel = levelForCarrots(state.bunny.totalCarrotsEarned);
   if (newLevel > state.bunny.level) {
@@ -401,83 +140,16 @@ export function step(
     return state;
   }
 
-  for (const slot of state.bunny.weaponSlots) {
-    if (!slot.weapon) continue;
-
-    slot.cooldownSeconds = Math.max(0, slot.cooldownSeconds - dt);
-    if (slot.cooldownSeconds > 0) continue;
-
-    const target = findNearestEnemy(state.bunny.x, state.bunny.y, state.enemies);
-    if (!target) continue;
-
-    const levelStats = slot.weapon.levels[slot.level - 1]!;
-    const attacksPerSecond =
-      levelStats.attacksPerSecond * (1 + state.bunny.stats.attackSpeedPercent / 100);
-    slot.cooldownSeconds = 1 / attacksPerSecond;
-
-    const facingAngle = Math.atan2(target.y - state.bunny.y, target.x - state.bunny.x);
-
-    switch (slot.weapon.deliveryMode) {
-      case "melee-arc": {
-        const hits = meleeArcHits(
-          state.bunny.x,
-          state.bunny.y,
-          facingAngle,
-          levelStats.range,
-          levelStats.arcDegrees ?? 360,
-          state.enemies,
-        );
-        applyWeaponHits(hits, levelStats.damage, slot.weapon, state);
-        break;
-      }
-      case "melee-single": {
-        const dx = target.x - state.bunny.x;
-        const dy = target.y - state.bunny.y;
-        const distance = Math.hypot(dx, dy);
-        if (distance <= levelStats.range + target.radius) {
-          applyWeaponHits([target], levelStats.damage, slot.weapon, state);
-        }
-        break;
-      }
-      case "hitscan": {
-        const hits = hitscanLineHits(
-          state.bunny.x,
-          state.bunny.y,
-          facingAngle,
-          levelStats.range,
-          levelStats.pierceCount ?? 1,
-          state.enemies,
-        );
-        applyWeaponHits(hits, levelStats.damage, slot.weapon, state);
-        break;
-      }
-      case "lobbed-aoe": {
-        const dx = target.x - state.bunny.x;
-        const dy = target.y - state.bunny.y;
-        const distance = Math.hypot(dx, dy);
-        const speed = levelStats.projectileSpeed ?? 1;
-        state.projectiles.spawn((p) => {
-          p.x = state.bunny.x;
-          p.y = state.bunny.y;
-          p.vx = distance === 0 ? 0 : (dx / distance) * speed;
-          p.vy = distance === 0 ? 0 : (dy / distance) * speed;
-          p.radius = PROJECTILE_RADIUS;
-          p.damage = levelStats.damage;
-          p.ttlSeconds = distance / speed; // detonates on arrival at the lobbed target
-          p.firedBy = "bunny";
-          p.aoe = {
-            splashRadius: levelStats.splashRadius ?? 0,
-            splashDamage: levelStats.splashDamage ?? 0,
-            familyStat: familyStatFor(slot.weapon!.family, state.bunny.stats),
-            globalDamagePercent: state.bunny.stats.damagePercent,
-            weaponFamily: slot.weapon!.family,
-            weaponId: slot.weapon!.id,
-          };
-        });
-        break;
-      }
-    }
-  }
+  state.totalKills += tickWeaponFiring(
+    {
+      bunny: state.bunny,
+      enemies: state.enemies,
+      projectiles: state.projectiles,
+      pickups: state.pickups,
+      rng: state.rng,
+    },
+    dt,
+  );
 
   state.bunny.iframeSeconds = Math.max(0, state.bunny.iframeSeconds - dt);
 
@@ -488,12 +160,10 @@ export function step(
       const dy = enemy.y - state.bunny.y;
       const touchRange = enemy.radius + state.bunny.radius;
       if (dx * dx + dy * dy <= touchRange * touchRange) {
-        state.bunny.hp -= enemy.contactDamage;
-        state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
-        if (enemy.lifestealPercent > 0) {
-          const healed = enemy.contactDamage * (enemy.lifestealPercent / 100);
-          enemy.hp = Math.min(enemy.hp + healed, enemy.maxHp);
-        }
+        resolveBunnyDamage(state.bunny, enemy.contactDamage, {
+          entity: enemy,
+          percent: enemy.lifestealPercent,
+        });
       }
     });
   }
@@ -506,12 +176,11 @@ export function step(
       const dy = p.y - state.bunny.y;
       const touchRange = p.radius + state.bunny.radius;
       if (dx * dx + dy * dy <= touchRange * touchRange) {
-        state.bunny.hp -= p.damage;
-        state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
-        if (p.lifestealPercent > 0 && p.owner && state.enemies.isActive(p.owner)) {
-          const healed = p.damage * (p.lifestealPercent / 100);
-          p.owner.hp = Math.min(p.owner.hp + healed, p.owner.maxHp);
-        }
+        const lifesteal =
+          p.lifestealPercent > 0 && p.owner && state.enemies.isActive(p.owner)
+            ? { entity: p.owner, percent: p.lifestealPercent }
+            : undefined;
+        resolveBunnyDamage(state.bunny, p.damage, lifesteal);
         state.projectiles.despawn(p);
       }
     });
@@ -523,8 +192,7 @@ export function step(
     const dy = boss.y - state.bunny.y;
     const touchRange = boss.radius + state.bunny.radius;
     if (dx * dx + dy * dy <= touchRange * touchRange) {
-      state.bunny.hp -= boss.contactDamage;
-      state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
+      resolveBunnyDamage(state.bunny, boss.contactDamage);
     }
   }
 
@@ -533,8 +201,7 @@ export function step(
     const dx = boss.x - state.bunny.x;
     const dy = boss.y - state.bunny.y;
     if (dx * dx + dy * dy <= GROUND_POUND_RADIUS * GROUND_POUND_RADIUS) {
-      state.bunny.hp -= GROUND_POUND_DAMAGE;
-      state.bunny.iframeSeconds = BUNNY_IFRAME_SECONDS;
+      resolveBunnyDamage(state.bunny, GROUND_POUND_DAMAGE);
     }
   }
 
