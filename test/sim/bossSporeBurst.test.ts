@@ -4,7 +4,8 @@ import {
   SPORE_BURST_CLOUD_COUNT,
   SPORE_BURST_CLOUD_DAMAGE_PER_SECOND,
 } from "../../src/data/boss";
-import { createBoss, createInitialState, NO_INPUT } from "../../src/sim/types";
+import { createBoss } from "../../src/sim/boss";
+import { createInitialState, NO_INPUT } from "../../src/sim/types";
 import { step } from "../../src/sim/step";
 
 describe("step", () => {

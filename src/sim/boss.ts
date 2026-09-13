@@ -1,13 +1,19 @@
 import {
+  BLOATLORD_CONTACT_DAMAGE,
+  BLOATLORD_HP,
+  BLOATLORD_RADIUS,
   BLOATLORD_SPEED_PHASE_1,
   BLOATLORD_SPEED_PHASE_2_MULTIPLIER,
   BOSS_TELEGRAPH_SECONDS,
+  GROUND_POUND_COOLDOWN_PHASE_1,
   GROUND_POUND_COOLDOWN_PHASE_2,
   SPORE_BURST_CLOUD_COUNT,
   SPORE_BURST_CLOUD_DAMAGE_PER_SECOND,
   SPORE_BURST_CLOUD_DURATION_SECONDS,
   SPORE_BURST_CLOUD_RADIUS,
+  SPORE_BURST_COOLDOWN_SECONDS,
   SPORE_BURST_LOB_RANGE,
+  SUMMON_COOLDOWN_SECONDS,
   SUMMON_COUNT_PHASE_1,
   SUMMON_SHAMBLER_COUNT_PHASE_2,
   SUMMON_SPITTER_COUNT_PHASE_2,
@@ -24,8 +30,52 @@ import { SPITTER } from "../data/enemies";
 import { initEnemyFromBand } from "./enemyFromBand";
 import type { EntityStore } from "./entityStore";
 import type { Rng } from "./rng";
-import type { Boss, Enemy, SporeCloud, TelegraphedAttack } from "./types";
+import type { Enemy, SporeCloud } from "./types";
 import { pickSpawnPosition } from "./waveDirector";
+
+/** A Boss attack's cooldown + telegraph timing, shared by Ground-Pound,
+ * Summon and Spore Burst (design spec §6: "every attack Telegraphed"). */
+export interface TelegraphedAttack {
+  cooldownSeconds: number;
+  cooldownRemaining: number;
+  /** > 0 while winding up; the attack lands the tick this reaches 0. */
+  telegraphRemaining: number;
+}
+
+function createTelegraphedAttack(cooldownSeconds: number): TelegraphedAttack {
+  return { cooldownSeconds, cooldownRemaining: 0, telegraphRemaining: 0 };
+}
+
+/** The Bloatlord (design spec §6 Boss, Wave 5). A singleton — undefined until spawned. */
+export interface Boss {
+  x: number;
+  y: number;
+  radius: number;
+  hp: number;
+  maxHp: number;
+  phase: 1 | 2;
+  contactDamage: number;
+  groundPound: TelegraphedAttack;
+  summon: TelegraphedAttack;
+  /** Only ticks/fires in Phase 2. */
+  sporeBurst: TelegraphedAttack;
+}
+
+/** Builds a fresh Bloatlord (design spec §6, Wave 5) at full HP, Phase 1. */
+export function createBoss(x: number, y: number): Boss {
+  return {
+    x,
+    y,
+    radius: BLOATLORD_RADIUS,
+    hp: BLOATLORD_HP,
+    maxHp: BLOATLORD_HP,
+    phase: 1,
+    contactDamage: BLOATLORD_CONTACT_DAMAGE,
+    groundPound: createTelegraphedAttack(GROUND_POUND_COOLDOWN_PHASE_1),
+    summon: createTelegraphedAttack(SUMMON_COOLDOWN_SECONDS),
+    sporeBurst: createTelegraphedAttack(SPORE_BURST_COOLDOWN_SECONDS),
+  };
+}
 
 /**
  * The Bloatlord (design spec §6 Boss, Wave 5): a Zombie with two Phases

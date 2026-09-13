@@ -8,8 +8,9 @@ import {
   LOGICAL_WIDTH,
   SHAMBLER_RADIUS,
 } from "../data/constants";
+import type { Boss } from "../sim/boss";
 import type { EntityStore } from "../sim/entityStore";
-import type { Boss, Carrot, Enemy, SporeCloud } from "../sim/types";
+import type { Carrot, Enemy, SporeCloud } from "../sim/types";
 
 /**
  * Builds the static scene for issue #1: the logical stage backdrop and the

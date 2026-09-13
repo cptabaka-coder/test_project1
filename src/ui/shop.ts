@@ -1,4 +1,4 @@
-import type { ShopOffer } from "../sim/types";
+import type { ShopOffer } from "../sim/shop";
 
 /**
  * The minimal between-Wave Shop screen (design spec §9): the 4 offers,

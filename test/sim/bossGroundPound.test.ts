@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BOSS_TELEGRAPH_SECONDS, GROUND_POUND_DAMAGE } from "../../src/data/boss";
-import { createBoss, createInitialState, NO_INPUT } from "../../src/sim/types";
+import { createBoss } from "../../src/sim/boss";
+import { createInitialState, NO_INPUT } from "../../src/sim/types";
 import { step } from "../../src/sim/step";
 
 function spawnBossOnBunny(state: ReturnType<typeof createInitialState>) {

@@ -1,12 +1,4 @@
 import {
-  BLOATLORD_CONTACT_DAMAGE,
-  BLOATLORD_HP,
-  BLOATLORD_RADIUS,
-  GROUND_POUND_COOLDOWN_PHASE_1,
-  SPORE_BURST_COOLDOWN_SECONDS,
-  SUMMON_COOLDOWN_SECONDS,
-} from "../data/boss";
-import {
   BUNNY_MAX_HP,
   BUNNY_RADIUS,
   CAP_ENEMIES,
@@ -19,12 +11,13 @@ import {
   WEAPON_SLOT_COUNT,
 } from "../data/constants";
 import type { WeaknessDef } from "../data/enemies";
-import type { ItemDef } from "../data/items";
 import type { StatGainOption } from "../data/levelUpPool";
 import { KNIFE, type WeaponDef } from "../data/weapons";
+import type { Boss } from "./boss";
 import { createEntityStore, type EntityStore } from "./entityStore";
 import { generateWaveBudget } from "./waveDirector";
 import { Rng } from "./rng";
+import type { ShopOffer } from "./shop";
 
 /** The six Run phases (design spec §2). Transitions are wired by later issues. */
 export type RunPhase =
@@ -99,11 +92,6 @@ function createWeaponSlots(): WeaponSlot[] {
   slots[0] = { weapon: KNIFE, level: 1, cooldownSeconds: 0, purchasePrice: 0 }; // starting loadout (design spec §3)
   return slots;
 }
-
-/** A Shop offer slot (design spec §9): a Weapon or an Item (design spec §10). */
-export type ShopOffer =
-  | { kind: "weapon"; weapon: WeaponDef; level: number; price: number }
-  | { kind: "item"; item: ItemDef; price: number };
 
 /** The player-controlled bunny (design spec §3). */
 export interface Bunny {
@@ -292,50 +280,6 @@ function resetProjectile(projectile: Projectile): void {
   projectile.aoe = undefined;
   projectile.lifestealPercent = 0;
   projectile.owner = undefined;
-}
-
-/** A Boss attack's cooldown + telegraph timing, shared by Ground-Pound,
- * Summon and Spore Burst (design spec §6: "every attack Telegraphed"). */
-export interface TelegraphedAttack {
-  cooldownSeconds: number;
-  cooldownRemaining: number;
-  /** > 0 while winding up; the attack lands the tick this reaches 0. */
-  telegraphRemaining: number;
-}
-
-function createTelegraphedAttack(cooldownSeconds: number): TelegraphedAttack {
-  return { cooldownSeconds, cooldownRemaining: 0, telegraphRemaining: 0 };
-}
-
-/** The Bloatlord (design spec §6 Boss, Wave 5). A singleton — undefined until spawned. */
-export interface Boss {
-  x: number;
-  y: number;
-  radius: number;
-  hp: number;
-  maxHp: number;
-  phase: 1 | 2;
-  contactDamage: number;
-  groundPound: TelegraphedAttack;
-  summon: TelegraphedAttack;
-  /** Only ticks/fires in Phase 2. */
-  sporeBurst: TelegraphedAttack;
-}
-
-/** Builds a fresh Bloatlord (design spec §6, Wave 5) at full HP, Phase 1. */
-export function createBoss(x: number, y: number): Boss {
-  return {
-    x,
-    y,
-    radius: BLOATLORD_RADIUS,
-    hp: BLOATLORD_HP,
-    maxHp: BLOATLORD_HP,
-    phase: 1,
-    contactDamage: BLOATLORD_CONTACT_DAMAGE,
-    groundPound: createTelegraphedAttack(GROUND_POUND_COOLDOWN_PHASE_1),
-    summon: createTelegraphedAttack(SUMMON_COOLDOWN_SECONDS),
-    sporeBurst: createTelegraphedAttack(SPORE_BURST_COOLDOWN_SECONDS),
-  };
 }
 
 /** A lingering Spore Burst hazard (design spec §6, Phase 2): damages the

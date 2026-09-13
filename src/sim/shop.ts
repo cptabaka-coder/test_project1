@@ -1,9 +1,14 @@
 import { SHOP_OFFER_COUNT } from "../data/constants";
-import { ALL_ITEMS } from "../data/items";
-import { ALL_WEAPONS } from "../data/weapons";
+import { ALL_ITEMS, type ItemDef } from "../data/items";
+import { ALL_WEAPONS, type WeaponDef } from "../data/weapons";
 import { itemPrice } from "./items";
 import type { Rng } from "./rng";
-import type { GameState, ShopOffer } from "./types";
+import type { GameState } from "./types";
+
+/** A Shop offer slot (design spec §9): a Weapon or an Item (design spec §10). */
+export type ShopOffer =
+  | { kind: "weapon"; weapon: WeaponDef; level: number; price: number }
+  | { kind: "item"; item: ItemDef; price: number };
 
 /**
  * The between-Wave Shop (design spec §9). Rerolling costs 1 Carrot the

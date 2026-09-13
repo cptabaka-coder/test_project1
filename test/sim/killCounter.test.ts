@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { SHAMBLER_RADIUS } from "../../src/data/constants";
 import { KNIFE } from "../../src/data/weapons";
-import { createBoss, createInitialState, NO_INPUT } from "../../src/sim/types";
+import { createBoss } from "../../src/sim/boss";
+import { createInitialState, NO_INPUT } from "../../src/sim/types";
 import { step } from "../../src/sim/step";
 
 describe("step", () => {
